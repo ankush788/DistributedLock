@@ -6,7 +6,7 @@
 
 ## 📌 Implementation Chunks & Milestones
 
-The implementation is broken down into **8 logical, sequential chunks**. Each chunk forms a complete, testable module of the system.
+The implementation is broken down into **8 logical, sequential chunks**. Core implementation proceeds feature-by-feature, with all testing consolidated into Chunk 7.
 
 ```mermaid
 flowchart TD
@@ -15,7 +15,7 @@ flowchart TD
     C3 --> C4["Chunk 4: Lock Service & Orchestration"]
     C4 --> C5["Chunk 5: Graph-Based Deadlock Detection"]
     C5 --> C6["Chunk 6: Monitoring, Metrics & REST API"]
-    C6 --> C7["Chunk 7: Stress Testing & Verification"]
+    C6 --> C7["Chunk 7: Comprehensive Testing Suite"]
     C7 --> C8["Chunk 8: Docker & AWS Deployment"]
 ```
 
@@ -34,10 +34,9 @@ flowchart TD
 ### 🧩 CHUNK 2: Core Atomic Lock Store (Redis + Lua Scripting)
 * **Goal:** Build the low-level atomic locking mechanism in Redis to guarantee no race conditions.
 * **Tasks:**
-  - [ ] Write Lua script `LUA_ACQUIRE_LOCK`: Check existence, set key with value (UUID owner identifier), set TTL atomically.
-  - [ ] Write Lua script `LUA_RELEASE_LOCK`: Verify ownership token before releasing (prevents releasing locks owned by other threads/services).
-  - [ ] Implement `RedisLockStore` class with Lettuce / `StringRedisTemplate`.
-  - [ ] Write unit tests for `RedisLockStore` (atomic acquire, owner-only release, TTL auto-expiry).
+  - [x] Write Lua script `LUA_ACQUIRE_LOCK`: Check existence, set key with value (UUID owner identifier), set TTL atomically.
+  - [x] Write Lua script `LUA_RELEASE_LOCK`: Verify ownership token before releasing (prevents releasing locks owned by other threads/services).
+  - [x] Implement `RedisLockStore` class with Lettuce / `StringRedisTemplate`.
 
 ---
 
@@ -48,7 +47,6 @@ flowchart TD
   - [ ] Support FIFO enqueueing of incoming requests when a lock is currently occupied.
   - [ ] Implement polling/waiting mechanism for queued callers with configurable queue timeout.
   - [ ] Implement queue position inspection API (`getQueuePosition`).
-  - [ ] Integration tests verifying fair FIFO order under concurrent request loads.
 
 ---
 
@@ -58,7 +56,6 @@ flowchart TD
   - [ ] Build `LockService` class with `acquireLock(...)` and `releaseLock(...)`.
   - [ ] Implement custom exceptions: `LockAcquisitionException`, `LockTimeoutException`, `DeadlockException`.
   - [ ] Add `@ControllerAdvice` for global API exception handling and structured error response payloads.
-  - [ ] Unit tests for `LockService` business workflows.
 
 ---
 
@@ -68,7 +65,6 @@ flowchart TD
   - [ ] Build `LockDependencyGraph` representation to track active lock dependencies (Service $\rightarrow$ Lock $\rightarrow$ Holding Service).
   - [ ] Implement `DeadlockDetector` using Depth-First Search (DFS) or Tarjan's algorithm for cycle detection.
   - [ ] Implement victim transaction resolution (abort/kill conflicting lock request and force release to break cycle).
-  - [ ] Write unit & integration tests covering 2-way ($A \leftrightarrow B$) and multi-way ($A \rightarrow B \rightarrow C \rightarrow A$) deadlock scenarios.
 
 ---
 
@@ -86,16 +82,20 @@ flowchart TD
 
 ---
 
-### 🧩 CHUNK 7: Verification & Comprehensive Stress Testing Suite
-* **Goal:** Ensure system stability under extreme concurrency, service crashes, and high load.
+### 🧩 CHUNK 7: Comprehensive Testing & Verification Suite
+* **Goal:** Complete end-to-end test suite verifying unit logic, concurrency stress, deadlock resolution, and integration.
 * **Tasks:**
-  - [ ] Write unit tests to reach >70% code coverage.
-  - [ ] Integration tests using Testcontainers (Redis + Postgres containers).
-  - [ ] Write high-concurrency performance test suite (1,000+ concurrent requests using `ExecutorService`).
-  - [ ] Verify End-to-End Scenarios:
-    - Service crash while holding lock (auto-expiry via TTL verification).
-    - Deadlock auto-detection & resolution test.
-    - FIFO fairness test under heavy contention.
+  - [ ] Unit tests for `RedisLockStore` (atomic acquire, owner token verification, TTL auto-expiry).
+  - [ ] Unit tests for `LockQueueManager` (FIFO ordering, queue position tracking, timeouts).
+  - [ ] Unit tests for `LockService` business workflows & exception handlers.
+  - [ ] Unit tests for `DeadlockDetector` (2-way $A \leftrightarrow B$ and multi-way $A \rightarrow B \rightarrow C \rightarrow A$ cycle detection).
+  - [ ] Integration tests for REST API endpoints (`/acquire`, `/release`, `/status`, `/metrics`).
+  - [ ] Testcontainers integration suite (running against real Redis and PostgreSQL containers).
+  - [ ] Concurrency performance & stress tests (1,000+ concurrent requests using `ExecutorService`).
+  - [ ] Edge-case verification:
+    - Service crash while holding lock (verifying automatic release via TTL).
+    - Heavy contention fair queue ordering.
+    - Automated deadlock victim abort and recovery.
 
 ---
 
@@ -114,12 +114,12 @@ flowchart TD
 
 ## 🚀 How We Will Execute Step-by-Step
 
-We will proceed **chunk by chunk**:
-1. **Chunk 1**: Project configuration, dependencies (`pom.xml`), Docker setup, and application properties.
-2. **Chunk 2**: Building the Lua scripts and `RedisLockStore`.
-3. **Chunk 3**: Building the FIFO queue manager.
-4. **Chunk 4**: Implementing `LockService` and exception handling.
+We proceed **feature-by-feature**:
+1. **Chunk 1**: Project configuration, dependencies (`pom.xml`), Docker setup, and application properties. *(Completed)*
+2. **Chunk 2**: Atomic Lua scripts and `RedisLockStore`. *(Completed)*
+3. **Chunk 3**: Fair FIFO queue manager.
+4. **Chunk 4**: LockService orchestrator and exception handling.
 5. **Chunk 5**: Graph-based deadlock detection engine.
-6. **Chunk 6**: REST controller, metrics, and PostgreSQL persistence.
-7. **Chunk 7**: Comprehensive testing & concurrency benchmarks.
-8. **Chunk 8**: Docker, GitHub Actions & AWS deployment guide.
+6. **Chunk 6**: REST controller, metrics collection, and PostgreSQL persistence.
+7. **Chunk 7**: Comprehensive test suite (Unit, Integration, Testcontainers & Concurrency Benchmarks).
+8. **Chunk 8**: Docker, GitHub Actions & AWS cloud deployment.

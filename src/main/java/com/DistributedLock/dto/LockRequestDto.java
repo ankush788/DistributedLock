@@ -12,6 +12,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class LockRequestDto {
 
+    /** Unique identifier of the shared resource to lock (e.g. inventory-123). */
     @NotBlank(message = "Lock name cannot be empty")
     private String lockName;
 }
