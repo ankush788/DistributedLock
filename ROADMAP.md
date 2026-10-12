@@ -24,10 +24,10 @@ flowchart TD
 ### 🧩 CHUNK 1: Project & Infrastructure Foundation
 * **Goal:** Configure dependencies, environment, database services (Docker), and base package architecture.
 * **Tasks:**
-  - [ ] Update `pom.xml`: Add Spring Data Redis (Lettuce), Spring Data JPA, PostgreSQL Driver, Spring Validation, Lombok, OpenAPI/Swagger.
-  - [ ] Create `docker-compose.yml` for local development (Redis + PostgreSQL).
-  - [ ] Define project structure: `config`, `controller`, `service`, `repository`, `model`, `dto`, `exception`, `util`.
-  - [ ] Configure `application.yml` for Redis connection pooling, database connectivity, and SLF4J/Logback logging.
+  - [x] Update `pom.xml`: Add Spring Data Redis (Lettuce), Spring Data JPA, PostgreSQL Driver, Spring Validation, Lombok, OpenAPI/Swagger.
+  - [x] Create `docker-compose.yml` for local development (Redis + PostgreSQL).
+  - [x] Define project structure: `config`, `controller`, `service`, `repository`, `model`, `dto`, `exception`, `util`.
+  - [x] Configure `application.properties` for Redis connection pooling, database connectivity, and SLF4J/Logback logging.
 
 ---
 
