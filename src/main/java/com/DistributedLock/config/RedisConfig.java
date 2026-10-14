@@ -22,7 +22,7 @@ public class RedisConfig {
     }
 
     /**
-     * Pre-loads and compiles the Lua script for atomic lock acquisition.
+     * Pre-loads and compiles the unified Lua script for atomic lock acquisition (direct or from queue head).
      */
     @Bean
     public RedisScript<Long> acquireLockScript() {

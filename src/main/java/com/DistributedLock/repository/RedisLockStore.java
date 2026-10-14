@@ -1,6 +1,5 @@
 package com.DistributedLock.repository;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -11,27 +10,36 @@ import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Low-level Redis Store handling atomic lock acquisition and release using Lua scripts.
+ * Low-level Redis Store handling atomic lock operations using unified Lua scripts.
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class RedisLockStore {
 
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<Long> acquireLockScript;
     private final RedisScript<Long> releaseLockScript;
 
+    public RedisLockStore(StringRedisTemplate redisTemplate,
+                          RedisScript<Long> acquireLockScript,
+                          RedisScript<Long> releaseLockScript) {
+        this.redisTemplate = redisTemplate;
+        this.acquireLockScript = acquireLockScript;
+        this.releaseLockScript = releaseLockScript;
+    }
+
     public static final String LOCK_KEY_PREFIX = "lock:";
     public static final String QUEUE_KEY_PREFIX = "lock:queue:";
 
     /**
-     * Atomically acquires a lock if it is free and no queue exists.
+     * Atomically acquires a lock if it is free and either:
+     * 1. No queue exists (direct acquire), OR
+     * 2. This tokenId is at the head of the FIFO queue (queue handover).
      *
      * @param lockName       name of the resource
      * @param tokenId        generated unique ownership token
      * @param timeoutSeconds lock expiration duration (TTL)
-     * @return true if acquired directly, false if held or queued
+     * @return true if acquired, false if held by another or not at head of queue
      */
     public boolean acquireLock(String lockName, String tokenId, long timeoutSeconds) {
         String lockKey = formatLockKey(lockName);
@@ -48,7 +56,7 @@ public class RedisLockStore {
             if (acquired) {
                 log.info("Lock acquired successfully: key='{}', tokenId='{}', ttl={}s", lockKey, tokenId, timeoutSeconds);
             } else {
-                log.debug("Lock acquire rejected (held or queue active): key='{}'", lockKey);
+                log.debug("Lock acquire rejected (held or not head of queue): key='{}', token='{}'", lockKey, tokenId);
             }
             return acquired;
         } catch (Exception ex) {

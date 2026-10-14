@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package com.DistributedLock.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.DistributedLock.grpc";
+option java_outer_classname = "DistributedLockProto";
+
+// High-Performance Distributed Lock Service via gRPC
+service DistributedLockService {
+
+    // Streaming Lock Acquisition:
+    // Client initiates request -> Server directly delivers the result (ACQUIRED, TIMEOUT, etc.)
+    rpc AcquireLock(LockAcquireRequest) returns (stream LockEvent);
+
+    // Unary RPC to release an active lock using ownership token_id
+    rpc ReleaseLock(LockReleaseRequest) returns (LockReleaseResponse);
+}
+
+enum LockStatusCode {
+    LOCK_STATUS_UNSPECIFIED = 0;
+    ACQUIRED = 1;
+    RELEASED = 2;
+    TIMEOUT = 3;
+    DEADLOCK_ABORTED = 4;
+    FAILED = 5;
+}
+
+message LockAcquireRequest {
+    string lock_name = 1;
+}
+
+message LockEvent {
+    string lock_name = 1;
+    string token_id = 2;
+    LockStatusCode status = 3;
+    string message = 4;
+}
+
+message LockReleaseRequest {
+    string lock_name = 1;
+    string token_id = 2;
+}
+
+message LockReleaseResponse {
+    string lock_name = 1;
+    bool released = 2;
+    string message = 3;
+}

@@ -14,7 +14,7 @@ flowchart TD
     C2 --> C3["Chunk 3: Fair FIFO Queuing Engine"]
     C3 --> C4["Chunk 4: Lock Service & Orchestration"]
     C4 --> C5["Chunk 5: Graph-Based Deadlock Detection"]
-    C5 --> C6["Chunk 6: Monitoring, Metrics & REST API"]
+    C5 --> C6["Chunk 6: Monitoring, Metrics & gRPC Streaming"]
     C6 --> C7["Chunk 7: Comprehensive Testing Suite"]
     C7 --> C8["Chunk 8: Docker & AWS Deployment"]
 ```
@@ -43,10 +43,10 @@ flowchart TD
 ### 🧩 CHUNK 3: Fair FIFO Queuing Engine
 * **Goal:** Implement queue management for lock requests to prevent thread/service starvation.
 * **Tasks:**
-  - [ ] Implement `LockQueueManager` using Redis Data Structures (List / Sorted Set).
-  - [ ] Support FIFO enqueueing of incoming requests when a lock is currently occupied.
-  - [ ] Implement polling/waiting mechanism for queued callers with configurable queue timeout.
-  - [ ] Implement queue position inspection API (`getQueuePosition`).
+  - [x] Implement `LockQueueManager` using Redis Data Structures (List / Sorted Set).
+  - [x] Support FIFO enqueueing of incoming requests when a lock is currently occupied.
+  - [x] Implement polling/waiting mechanism for queued callers with configurable queue timeout.
+  - [x] Implement queue position inspection API (`getQueuePosition`).
 
 ---
 
@@ -68,17 +68,16 @@ flowchart TD
 
 ---
 
-### 🧩 CHUNK 6: Monitoring, Observability & REST API
-* **Goal:** Expose REST endpoints and record operational metrics for audit and monitoring.
+### 🧩 CHUNK 6: Monitoring, Observability & gRPC Streaming Service
+* **Goal:** Implement high-performance gRPC bi-directional/server streaming interface and record audit metrics in PostgreSQL.
 * **Tasks:**
   - [ ] Implement `LockMonitor` metrics collector (tracks total acquisitions, wait times, contention rates, deadlock incidents).
   - [ ] Create JPA Entities (`LockAuditLog`, `MetricsSnapshot`) and Spring Data Repositories for PostgreSQL persistence.
-  - [ ] Create `LockController`:
-    - `POST /api/v1/locks/acquire` - Acquire lock / enter queue
-    - `POST /api/v1/locks/release` - Release lock & notify next waiter
-    - `GET /api/v1/locks/status/{lockName}` - Query lock status
-    - `GET /api/v1/metrics` - Fetch real-time system performance metrics
-  - [ ] Configure Swagger UI (`/swagger-ui.html`) for interactive API testing.
+  - [ ] Implement `DistributedLockGrpcService`:
+    - `AcquireLock(request, responseObserver)`: High-performance streaming push notification.
+    - `ReleaseLock(request, responseObserver)`: Unary RPC releasing lock & triggering queue handover.
+    - `GetLockStatus(request, responseObserver)`: Unary RPC inspecting lock status and queue length.
+  - [ ] Configure gRPC server port (`grpc.server.port=9090`) and HTTP metrics/Swagger support.
 
 ---
 

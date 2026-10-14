@@ -1,6 +1,5 @@
 package com.DistributedLock.dto;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -8,8 +7,15 @@ import lombok.NoArgsConstructor;
 @Data
 @Builder
 @NoArgsConstructor
-@AllArgsConstructor
 public class LockResponseDto {
+
+    public LockResponseDto(String lockName, String tokenId, LockStatus status, Integer queuePosition, String message) {
+        this.lockName = lockName;
+        this.tokenId = tokenId;
+        this.status = status;
+        this.queuePosition = queuePosition;
+        this.message = message;
+    }
 
     /** Name of the resource lock this response corresponds to. */
     private String lockName;

@@ -1,7 +1,6 @@
 package com.DistributedLock.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -9,8 +8,12 @@ import lombok.NoArgsConstructor;
 @Data
 @Builder
 @NoArgsConstructor
-@AllArgsConstructor
 public class LockReleaseDto {
+
+    public LockReleaseDto(String lockName, String tokenId) {
+        this.lockName = lockName;
+        this.tokenId = tokenId;
+    }
 
     /** Name of the locked resource to be released. */
     @NotBlank(message = "Lock name cannot be empty")
