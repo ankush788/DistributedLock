@@ -72,14 +72,14 @@ public class GlobalExceptionHandler {
     }
 
     private ResponseEntity<ErrorResponseDto> buildResponse(HttpStatus status, String errorCode, String message, String path, String lockName) {
-        ErrorResponseDto errorDto = ErrorResponseDto.builder()
-                .timestamp(LocalDateTime.now())
-                .status(status.value())
-                .error(errorCode)
-                .message(message)
-                .path(path)
-                .lockName(lockName)
-                .build();
+        ErrorResponseDto errorDto = new ErrorResponseDto(
+                LocalDateTime.now(),
+                status.value(),
+                errorCode,
+                message,
+                path,
+                lockName
+        );
         return new ResponseEntity<>(errorDto, status);
     }
 }

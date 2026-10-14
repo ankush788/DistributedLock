@@ -1,17 +1,14 @@
 package com.DistributedLock.dto;
 
-import lombok.Builder;
-
 /**
  * Response payload describing lock acquisition status.
- *
- * @param lockName      Name of the resource lock.
- * @param tokenId       Secret UUID token proving lock ownership.
- * @param status        Current state of the lock request.
- * @param queuePosition Waiting position in the FIFO queue (null if acquired immediately).
- * @param message       Human-readable explanation of the result.
+ * param lockName      Name of the resource lock.
+ * param tokenId       Secret UUID token proving lock ownership.
+ * param status        Current state of the lock request.
+ * param queuePosition Waiting position in the FIFO queue (null if acquired immediately).
+ * param message       Human-readable explanation of the result.
  */
-@Builder
+
 public record LockResponseDto(
     String lockName,
     String tokenId,
