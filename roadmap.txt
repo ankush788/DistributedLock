@@ -1,0 +1,75 @@
+DISTRIBUTED LOCKING SERVICE - STEP-BY-STEP IMPLEMENTATION ROADMAP
+
+Core Architecture: Pattern A - High-Performance gRPC Server-Streaming (HTTP/2 multiplexed streaming).
+The client sends AcquireLock(lock_name). If occupied, the connection stays open at zero CPU/thread cost.
+The millisecond the lock is released, Redis Pub/Sub wakes up the server, which directly streams
+LockEvent(ACQUIRED, token) back to the client. No client polling required.
+
+================================================================================
+END-TO-END WORKFLOW (PATTERN A - gRPC STREAMING):
+================================================================================
+1. Client initiates: rpc AcquireLock(lock_name="order-123") -> stream LockEvent
+2. Server executes Lua script (acquire_lock.lua) in Redis.
+   - FAST PATH: If free, server immediately streams LockEvent(status=ACQUIRED, token="uuid-111").
+   - QUEUE FALLBACK: If occupied, server adds "uuid-111#timestamp" to Redis list (lock:queue:order-123),
+     registers an internal listener on Redis channel 'lock:notify:order-123', and keeps the gRPC stream open.
+3. Client does zero polling; connection is suspended at 0% CPU.
+4. When lock holder releases via rpc ReleaseLock(lock_name="order-123", token="token-A"):
+   - release_lock.lua deletes key AND publishes 'RELEASED' to Redis channel 'lock:notify:order-123'.
+   - Server listener triggers immediately (sub-millisecond).
+   - Server pops queue head, acquires lock atomically via Lua, and pushes LockEvent(status=ACQUIRED)
+     to the waiting client stream!
+5. TIMEOUT: If queue timeout (e.g. 10s) expires before the lock becomes free, server removes entry
+   from queue, streams LockEvent(status=TIMEOUT), and closes the stream.
+6. CLIENT DISCONNECT: If client cancels or disconnects early, server cleans up the queue entry
+   so no abandoned tokens block the queue.
+
+================================================================================
+IMPLEMENTATION CHUNKS & MILESTONES:
+================================================================================
+
+[x] CHUNK 1: Project & Infrastructure Foundation
+    - Spring Boot 3.5.16, Lettuce Redis, Spring Data JPA, PostgreSQL Driver, gRPC starter, Protobuf.
+    - docker-compose.yml for local Redis + PostgreSQL.
+    - Application properties with Redis pool, gRPC port 9090, default timeouts.
+
+[x] CHUNK 2: Core Atomic Lock Store (Redis + Lua Scripting)
+    - acquire_lock.lua: Atomic acquire with FIFO queue-head verification and TTL.
+    - release_lock.lua: Atomic release verifying ownership token.
+    - RedisLockStore: Low-level Redis operations.
+
+[ ] CHUNK 3: Fair FIFO Queue Engine + Instant Pub/Sub Signal
+    - LockQueueManager: Redis list FIFO queue (RPUSH combined tokenId#timestamp).
+    - Update release_lock.lua to PUBLISH 'RELEASED' to Redis channel 'lock:notify:<lockName>'.
+    - RedisMessageListenerContainer & Pub/Sub subscription in LockQueueManager to wake up queue head.
+
+[ ] CHUNK 4: High-Performance gRPC Streaming Implementation (Pattern A)
+    - proto definition: DistributedLockService with AcquireLock(stream) and ReleaseLock(unary).
+    - DistributedLockGrpcService implementation:
+      * Fast path: Direct acquire -> immediate onNext(ACQUIRED).
+      * Queue path: Register StreamObserver, wait on Pub/Sub event, push onNext(ACQUIRED).
+      * Timeout path: Scheduled timeout emitting onNext(TIMEOUT).
+      * Disconnect listener: Clean up queue entry on client cancellation.
+      * ReleaseLock: Validate token, delete lock, trigger Pub/Sub handover.
+
+[ ] CHUNK 5: Graph-Based Deadlock Detection Engine
+    - LockDependencyGraph: Tracks active dependencies (Caller -> Waiting on Lock -> Held by Caller).
+    - DeadlockDetector: Depth-First Search (DFS) cycle detection.
+    - Cycle resolution: Abort conflicting request with DEADLOCK_ABORTED to break cycle safely.
+
+[ ] CHUNK 6: Monitoring, Metrics & PostgreSQL Audit Store
+    - LockAuditLog, MetricsSnapshot JPA entities and repositories in PostgreSQL.
+    - LockMonitor: Records throughput, wait latency, contention rate, deadlock incidents.
+    - Actuator/Prometheus metrics endpoints.
+
+[ ] CHUNK 7: Comprehensive Testing Suite
+    - Unit tests for RedisLockStore & LockQueueManager.
+    - Integration tests for gRPC Streaming service (AcquireLock, ReleaseLock).
+    - Deadlock cycle detection tests.
+    - Concurrency stress tests (1,000+ concurrent requests).
+    - Testcontainers running against real Redis and PostgreSQL.
+
+[ ] CHUNK 8: Containerization & AWS Cloud Deployment
+    - Multi-stage Dockerfile.
+    - AWS deployment documentation (EC2, RDS PostgreSQL, ElastiCache Redis).
+    - GitHub Actions CI/CD workflow.

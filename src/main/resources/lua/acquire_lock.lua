@@ -3,7 +3,7 @@
 -- ARGV[1]: tokenId (clean unique ownership token)
 -- ARGV[2]: timeoutSeconds (TTL for the lock)
 
--- 1. If lock is already held, nobody can acquire
+-- 1. If lock is already held, cannot acquire
 if redis.call('EXISTS', KEYS[1]) == 1 then
     return 0
 end
@@ -21,8 +21,6 @@ end
 
 -- 3. CASE B: Queue has waiters -> Only the HEAD of the line can acquire!
 local headToken = redis.call('LINDEX', KEYS[2], 0)
-
--- Extract clean tokenId before the '#' symbol (queue stores "tokenId#timestamp")
 local cleanHeadToken = string.match(headToken, "([^#]+)") or headToken
 
 if cleanHeadToken == ARGV[1] then
