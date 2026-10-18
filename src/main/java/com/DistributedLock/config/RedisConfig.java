@@ -8,6 +8,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
+
 @Configuration
 public class RedisConfig {
 
@@ -16,9 +18,17 @@ public class RedisConfig {
      */
     @Bean
     public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory connectionFactory) {
-        StringRedisTemplate template = new StringRedisTemplate();
-        template.setConnectionFactory(connectionFactory);
-        return template;
+        return new StringRedisTemplate(connectionFactory);
+    }
+
+    /**
+     * Configures the RedisMessageListenerContainer for asynchronous Pub/Sub messaging.
+     */
+    @Bean
+    public RedisMessageListenerContainer redisMessageListenerContainer(RedisConnectionFactory connectionFactory) {
+        RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+        container.setConnectionFactory(connectionFactory);
+        return container;
     }
 
     /**

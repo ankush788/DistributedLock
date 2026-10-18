@@ -1,0 +1,21 @@
+// normal 
+curl -X POST http://localhost:8080/api/v1/locks/acquire `
+  -H "Content-Type: application/json" `
+  -d '{"lockName": "inventory-101"}'
+
+
+// for queue
+curl -X POST http://localhost:8080/api/v1/locks/acquire `
+  -H "Content-Type: application/json" `
+  -d '{"lockName": "inventory-101"}'
+
+// relase (fake token)
+curl -X POST http://localhost:8080/api/v1/locks/release `
+  -H "Content-Type: application/json" `
+  -d '{"lockName": "inventory-101", "tokenId": "fake-token-999"}'
+
+
+// relase (real token)
+curl -X POST http://localhost:8080/api/v1/locks/release `
+  -H "Content-Type: application/json" `
+  -d '{"lockName": "inventory-101", "tokenId": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}'

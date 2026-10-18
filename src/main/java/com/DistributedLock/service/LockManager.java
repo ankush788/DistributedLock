@@ -24,8 +24,8 @@ public class LockManager {
     @Value("${distributed-lock.default-queue-timeout-seconds:10}")
     private long defaultQueueTimeoutSeconds;
 
-    @Value("${distributed-lock.queue-safety-ttl-hours:24}")
-    private long queueSafetyTtlHours;
+    @Value("${distributed-lock.queue-safety-ttl-ms:86400000}")
+    private long queueSafetyTtlMs;
 
     private static final String QUEUE_KEY_PREFIX = "lock:queue:";
     private static final String NOTIFY_CHANNEL_PREFIX = "lock:notify:";
@@ -71,7 +71,7 @@ public class LockManager {
 
         try {
             redisTemplate.opsForList().rightPush(queueKey, queueEntry);
-            redisTemplate.expire(queueKey, queueSafetyTtlHours, TimeUnit.HOURS);
+            redisTemplate.expire(queueKey, queueSafetyTtlMs, TimeUnit.MILLISECONDS);
             log.info("LockManager: Enqueued entry '{}' into queue for lock '{}'", queueEntry, lockName);
             return queueEntry;
         } catch (Exception ex) {
@@ -96,7 +96,9 @@ public class LockManager {
                 String targetedChannel = formatNotifyChannel(lockName, nextTokenId);
 
                 // Wake up ONLY this specific next token
-                redisTemplate.convertAndSend(targetedChannel, "ACQUIRE_NOW");
+                redisTemplate.convertAndSend(targetedChannel, "ACQUIRE_NOW"); 
+                // What it does: Sends the message "ACQUIRE_NOW" directly to that specific token's channel (targetedChannel).
+                //What happens next: The waiting service listening on that channel receives the message instantly (sub-millisecond) and proceeds to acquire the lock.
                 log.info("LockManager: Targeted signal sent to next-in-line token '{}' on channel '{}'", nextTokenId, targetedChannel);
             } else {
                 log.debug("LockManager: No waiting requests in queue for lock '{}' to signal", lockName);

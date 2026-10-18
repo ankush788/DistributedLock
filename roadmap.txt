@@ -1,56 +1,51 @@
 DISTRIBUTED LOCKING SERVICE - STEP-BY-STEP IMPLEMENTATION ROADMAP
 
-Core Architecture: Pattern A - High-Performance gRPC Server-Streaming (HTTP/2 multiplexed streaming).
-The client sends AcquireLock(lock_name). If occupied, the connection stays open at zero CPU/thread cost.
-The millisecond the lock is released, Redis Pub/Sub wakes up the server, which directly streams
-LockEvent(ACQUIRED, token) back to the client. No client polling required.
+Core Architecture: Spring Boot MVC REST API Architecture.
+Client interacts with standard REST endpoints:
+- POST /api/v1/locks/acquire -> Tries atomic Lua acquire. If free, returns ACQUIRED with token. If occupied, enqueues in Redis FIFO list and returns QUEUED.
+- POST /api/v1/locks/release -> Releases token atomically, signals next waiter via targeted Redis Pub/Sub, and returns RELEASED.
+- Key Expiry: Redis Key Expiration Listener (__keyevent@*__:expired) intercepts TTL expiration and automatically signals the next waiter.
 
 ================================================================================
-END-TO-END WORKFLOW (PATTERN A - gRPC STREAMING):
+END-TO-END WORKFLOW (SPRING MVC ARCHITECTURE):
 ================================================================================
-1. Client initiates: rpc AcquireLock(lock_name="order-123") -> stream LockEvent
-2. Server executes Lua script (acquire_lock.lua) in Redis.
-   - FAST PATH: If free, server immediately streams LockEvent(status=ACQUIRED, token="uuid-111").
-   - QUEUE FALLBACK: If occupied, server adds "uuid-111#timestamp" to Redis list (lock:queue:order-123),
-     registers an internal listener on Redis channel 'lock:notify:order-123', and keeps the gRPC stream open.
-3. Client does zero polling; connection is suspended at 0% CPU.
-4. When lock holder releases via rpc ReleaseLock(lock_name="order-123", token="token-A"):
-   - release_lock.lua deletes key AND publishes 'RELEASED' to Redis channel 'lock:notify:order-123'.
-   - Server listener triggers immediately (sub-millisecond).
-   - Server pops queue head, acquires lock atomically via Lua, and pushes LockEvent(status=ACQUIRED)
-     to the waiting client stream!
-5. TIMEOUT: If queue timeout (e.g. 10s) expires before the lock becomes free, server removes entry
-   from queue, streams LockEvent(status=TIMEOUT), and closes the stream.
-6. CLIENT DISCONNECT: If client cancels or disconnects early, server cleans up the queue entry
-   so no abandoned tokens block the queue.
+1. Client calls: POST /api/v1/locks/acquire {"lockName": "order-123"}
+2. Server executes Lua script (acquire_lock.lua) in Redis:
+   - FAST PATH: If free, server immediately returns LockResponseDto(status=ACQUIRED, tokenId="uuid-111").
+   - QUEUE FALLBACK: If occupied, server adds "uuid-111#timestamp" to Redis list (lock:queue:order-123)
+     and returns LockResponseDto(status=QUEUED, tokenId="uuid-111").
+3. When lock holder releases: POST /api/v1/locks/release {"lockName": "order-123", "tokenId": "token-A"}:
+   - release_lock.lua verifies ownership token and deletes key.
+   - LockManager.signalNext() publishes "ACQUIRE_NOW" to targeted channel "lock:notify:order-123:token-B".
+4. TTL EXPIRATION SAFETY:
+   - If current holder crashes or forgets to release, Redis TTL deletes the lock key.
+   - RedisKeyExpirationListener intercepts __keyevent@*__:expired and triggers signalNext() to hand over to next waiter.
 
 ================================================================================
 IMPLEMENTATION CHUNKS & MILESTONES:
 ================================================================================
 
 [x] CHUNK 1: Project & Infrastructure Foundation
-    - Spring Boot 3.5.16, Lettuce Redis, Spring Data JPA, PostgreSQL Driver, gRPC starter, Protobuf.
+    - Spring Boot 3.5.16, Lettuce Redis, Spring Data JPA, PostgreSQL Driver, Spring Validation.
     - docker-compose.yml for local Redis + PostgreSQL.
-    - Application properties with Redis pool, gRPC port 9090, default timeouts.
+    - Application properties with Redis pool, default timeouts.
 
 [x] CHUNK 2: Core Atomic Lock Store (Redis + Lua Scripting)
     - acquire_lock.lua: Atomic acquire with FIFO queue-head verification and TTL.
     - release_lock.lua: Atomic release verifying ownership token.
     - RedisLockStore: Low-level Redis operations.
 
-[ ] CHUNK 3: Fair FIFO Queue Engine + Instant Pub/Sub Signal
-    - LockQueueManager: Redis list FIFO queue (RPUSH combined tokenId#timestamp).
-    - Update release_lock.lua to PUBLISH 'RELEASED' to Redis channel 'lock:notify:<lockName>'.
-    - RedisMessageListenerContainer & Pub/Sub subscription in LockQueueManager to wake up queue head.
+[x] CHUNK 3: Fair FIFO Queue Engine + Instant Pub/Sub Signal
+    - Redis list FIFO queue (RPUSH combined tokenId#timestamp) in LockManager.
+    - Targeted Unicast Signalling (wakes up only head of queue, eliminating thundering herd).
+    - RedisMessageListenerContainer & Redis Pub/Sub subscription.
+    - Automatic Redis Key Expiration Listener (__keyevent@*__:expired) for seamless TTL handover.
 
-[ ] CHUNK 4: High-Performance gRPC Streaming Implementation (Pattern A)
-    - proto definition: DistributedLockService with AcquireLock(stream) and ReleaseLock(unary).
-    - DistributedLockGrpcService implementation:
-      * Fast path: Direct acquire -> immediate onNext(ACQUIRED).
-      * Queue path: Register StreamObserver, wait on Pub/Sub event, push onNext(ACQUIRED).
-      * Timeout path: Scheduled timeout emitting onNext(TIMEOUT).
-      * Disconnect listener: Clean up queue entry on client cancellation.
-      * ReleaseLock: Validate token, delete lock, trigger Pub/Sub handover.
+[x] CHUNK 4: Spring MVC REST Controller & Service Architecture
+    - LockController: REST endpoints for /api/v1/locks/acquire and /api/v1/locks/release.
+    - LockService: Coordinates LockManager atomic acquire, queueing, release, and next-waiter signal.
+    - Clean Record DTOs (LockRequestDto, LockReleaseDto, LockResponseDto, ErrorResponseDto).
+    - Swagger UI / OpenAPI documentation at /swagger-ui.html.
 
 [ ] CHUNK 5: Graph-Based Deadlock Detection Engine
     - LockDependencyGraph: Tracks active dependencies (Caller -> Waiting on Lock -> Held by Caller).
