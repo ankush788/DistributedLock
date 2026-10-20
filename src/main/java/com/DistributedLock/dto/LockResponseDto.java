@@ -21,6 +21,7 @@ public record LockResponseDto(
         QUEUED,
         FAILED,
         RELEASED,
+        REVOKED,
         DEADLOCK_DETECTED
     }
 }

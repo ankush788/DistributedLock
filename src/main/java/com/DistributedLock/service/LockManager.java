@@ -124,6 +124,52 @@ public class LockManager {
     }
 
     /**
+     * Gets the current owner tokenId of the lock from Redis, or null if not held.
+     */
+    public String getLockOwner(String lockName) {
+        return redisTemplate.opsForValue().get(redisLockStore.formatLockKey(lockName));
+    }
+
+    /**
+     * Searches for a tokenId in the FIFO queue and removes it.
+     * If the removed token was at the head of the queue (index 0) and the lock is free,
+     * signals the next waiter.
+     *
+     * @param lockName resource name
+     * @param tokenId  ownership token to remove
+     * @return true if found and removed from queue, false otherwise
+     */
+    public boolean removeTokenFromQueue(String lockName, String tokenId) {
+        String queueKey = formatQueueKey(lockName);
+        try {
+            java.util.List<String> entries = redisTemplate.opsForList().range(queueKey, 0, -1);
+            if (entries == null || entries.isEmpty()) {
+                return false;
+            }
+
+            for (int i = 0; i < entries.size(); i++) {
+                String entry = entries.get(i);
+                if (entry.startsWith(tokenId + DELIMITER)) {
+                    Long removed = redisTemplate.opsForList().remove(queueKey, 1, entry);
+                    boolean isRemoved = removed != null && removed > 0;
+                    if (isRemoved) {
+                        log.info("LockManager: Revoked entry '{}' at position {} from queue for lock '{}'", entry, i, lockName);
+                        // If it was at index 0 and lock is currently free, wake up the new head
+                        if (i == 0 && !isLocked(lockName)) {
+                            signalNext(lockName);
+                        }
+                    }
+                    return isRemoved;
+                }
+            }
+            return false;
+        } catch (Exception ex) {
+            log.error("LockManager: Failed to remove token '{}' from queue for lock '{}': {}", tokenId, lockName, ex.getMessage(), ex);
+            return false;
+        }
+    }
+
+    /**
      * Removes a combined entry from the queue list.
      */
     public boolean removeFromQueue(String lockName, String queueEntry) {

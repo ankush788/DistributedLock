@@ -4,6 +4,7 @@ import com.DistributedLock.dto.LockReleaseDto;
 import com.DistributedLock.dto.LockRequestDto;
 import com.DistributedLock.dto.LockResponseDto;
 import com.DistributedLock.dto.LockResponseDto.LockStatus;
+import com.DistributedLock.dto.LockRevokeDto;
 import com.DistributedLock.service.LockService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/locks")
-@Tag(name = "Distributed Lock API", description = "Endpoints for acquiring and releasing distributed locks")
+@Tag(name = "Distributed Lock API", description = "Endpoints for acquiring, releasing, and revoking distributed locks")
 public class LockController {
 
     private final LockService lockService;
@@ -50,5 +51,18 @@ public class LockController {
         log.info("REST: Lock release request for resource '{}' [token={}]", request.lockName(), request.tokenId());
         LockResponseDto response = lockService.releaseLock(request.lockName(), request.tokenId());
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/revoke")
+    @Operation(summary = "Revoke a lock request", description = "Removes request from queue if waiting, or releases lock and signals next if currently held.")
+    public ResponseEntity<LockResponseDto> revokeLock(@Valid @RequestBody LockRevokeDto request) {
+        log.info("REST: Lock revoke request for resource '{}' [token={}]", request.lockName(), request.tokenId());
+        LockResponseDto response = lockService.revokeLock(request.lockName(), request.tokenId());
+
+        HttpStatus httpStatus = (response.status() == LockStatus.FAILED)
+                ? HttpStatus.NOT_FOUND
+                : HttpStatus.OK;
+
+        return ResponseEntity.status(httpStatus).body(response);
     }
 }

@@ -105,6 +105,67 @@ public class LockService {
         );
     }
 
+    /**
+     * Revokes a request:
+     * 1. If currently held (acquired), releases lock and signals next in queue.
+     * 2. If queued, removes the request from the queue.
+     * 3. Otherwise, returns not found / failed.
+     *
+     * @param lockName name of the locked resource
+     * @param tokenId  ownership token to revoke
+     * @return LockResponseDto with the revoke outcome
+     */
+    public LockResponseDto revokeLock(String lockName, String tokenId) {
+        if (lockName == null || lockName.isBlank()) {
+            throw new IllegalArgumentException("Lock name must not be blank");
+        }
+        if (tokenId == null || tokenId.isBlank()) {
+            throw new IllegalArgumentException("Token ID must not be blank");
+        }
+
+        log.info("LockService: Revoke requested for resource '{}' [token={}]", lockName, tokenId);
+
+        // 1. Check if the lock is currently held by this token
+        String currentOwner = lockManager.getLockOwner(lockName);
+        if (tokenId.equals(currentOwner)) {
+            log.info("LockService: Token '{}' is current holder of '{}'. Releasing active lock.", tokenId, lockName);
+            boolean released = lockManager.release(lockName, tokenId);
+            if (released) {
+                lockManager.signalNext(lockName);
+                return new LockResponseDto(
+                        lockName,
+                        tokenId,
+                        LockStatus.RELEASED,
+                        null,
+                        "Active lock was revoked and released successfully; next waiter signaled"
+                );
+            }
+        }
+
+        // 2. Check if the token is waiting in the FIFO queue
+        boolean removedFromQueue = lockManager.removeTokenFromQueue(lockName, tokenId);
+        if (removedFromQueue) {
+            log.info("LockService: Token '{}' revoked from queue for resource '{}'", tokenId, lockName);
+            return new LockResponseDto(
+                    lockName,
+                    tokenId,
+                    LockStatus.REVOKED,
+                    null,
+                    "Queued request was revoked and removed from the queue successfully"
+            );
+        }
+
+        // 3. Neither held nor in queue
+        log.warn("LockService: Revoke failed. Token '{}' not found for lock '{}'", tokenId, lockName);
+        return new LockResponseDto(
+                lockName,
+                tokenId,
+                LockStatus.FAILED,
+                null,
+                "Request not found: token is neither holding the lock nor waiting in queue"
+        );
+    }
+
     public LockManager getLockManager() {
         return lockManager;
     }
