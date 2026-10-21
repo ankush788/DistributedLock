@@ -11,11 +11,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * REST API Controller for distributed locking operations.
@@ -32,17 +31,26 @@ public class LockController {
         this.lockService = lockService;
     }
 
-    @PostMapping("/acquire")
-    @Operation(summary = "Acquire a distributed lock", description = "Attempts immediate atomic acquire or queues in fair FIFO order.")
-    public ResponseEntity<LockResponseDto> acquireLock(@Valid @RequestBody LockRequestDto request) {
-        log.info("REST: Lock acquire request for resource '{}'", request.lockName());
-        LockResponseDto response = lockService.acquireLock(request.lockName());
+    /**
+     * Acquire endpoint using Server-Sent Events (SSE) via GET.
+     * Perfect for browser EventSource and curl -N.
+     */
+    @GetMapping(value = "/acquire", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "Acquire a distributed lock (SSE via GET)", description = "Streams lock state. Returns immediately if free, or streams until lock is acquired in fair FIFO order.")
+    public SseEmitter acquireLockGet(@RequestParam("lockName") String lockName) {
+        log.info("REST SSE (GET): Lock acquire request for resource '{}'", lockName);
+        return lockService.acquireLock(lockName);
+    }
 
-        HttpStatus httpStatus = (response.status() == LockStatus.ACQUIRED)
-                ? HttpStatus.OK
-                : HttpStatus.ACCEPTED;
-
-        return ResponseEntity.status(httpStatus).body(response);
+    /**
+     * Acquire endpoint using Server-Sent Events (SSE) via POST.
+     * Compatible with REST clients passing JSON body.
+     */
+    @PostMapping(value = "/acquire", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "Acquire a distributed lock (SSE via POST)", description = "Streams lock state. Returns immediately if free, or streams until lock is acquired in fair FIFO order.")
+    public SseEmitter acquireLockPost(@Valid @RequestBody LockRequestDto request) {
+        log.info("REST SSE (POST): Lock acquire request for resource '{}'", request.lockName());
+        return lockService.acquireLock(request.lockName());
     }
 
     @PostMapping("/release")

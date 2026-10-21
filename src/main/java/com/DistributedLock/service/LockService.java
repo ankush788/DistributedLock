@@ -4,70 +4,109 @@ import com.DistributedLock.dto.LockResponseDto;
 import com.DistributedLock.dto.LockResponseDto.LockStatus;
 import com.DistributedLock.exception.LockException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Service coordinating lock operations with LockManager.
+ * Service coordinating single-responsibility lock operations and SSE streaming.
  */
 @Slf4j
 @Service
 public class LockService {
 
     private final LockManager lockManager;
+    private final Map<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
 
     public LockService(LockManager lockManager) {
         this.lockManager = lockManager;
     }
 
     /**
-     * Tries to acquire lock from LockManager.
-     * If fail -> puts in queue.
-     *
-     * @param lockName name of the shared resource to lock
-     * @return LockResponseDto with token and status (ACQUIRED or QUEUED)
+     * 1. ACQUIRE (SSE STREAMING):
+     * - Fast path: Direct acquire -> sends ACQUIRED event and CLOSES connection immediately.
+     * - Waiting path: Enqueued -> sends QUEUED event and KEEPS connection open at 0% CPU.
+     * - Safety: Disconnect/timeout calls revokeLock() internally and closes connection.
      */
-    public LockResponseDto acquireLock(String lockName) {
+    public SseEmitter acquireLock(String lockName) {
         if (lockName == null || lockName.isBlank()) {
             throw new IllegalArgumentException("Lock name must not be blank");
         }
 
+        long queueTimeoutMillis = lockManager.getDefaultQueueTimeoutMillis();
+        SseEmitter emitter = new SseEmitter(queueTimeoutMillis);
         String tokenId = UUID.randomUUID().toString();
-        log.info("LockService: Attempting acquire for resource '{}' [token={}]", lockName, tokenId);
 
-        // 1. Try to acquire lock from lock manager
-        boolean acquired = lockManager.acquire(lockName, tokenId);
+        log.info("LockService: Acquire requested for resource '{}' [token={}]", lockName, tokenId);
+
+        // FAST PATH: Direct Acquire
+        boolean acquired = lockManager.acquireDirect(lockName, tokenId);
         if (acquired) {
-            log.info("LockService: Lock acquired successfully for '{}' [token={}]", lockName, tokenId);
-            return new LockResponseDto(
+            log.info("LockService: Direct acquire succeeded for '{}' [token={}]", lockName, tokenId);
+            sendSseEvent(emitter, new LockResponseDto(
                     lockName,
                     tokenId,
                     LockStatus.ACQUIRED,
                     null,
                     "Lock acquired successfully"
-            );
+            ));
+            emitter.complete(); // Connection closes immediately!
+            return emitter;
         }
 
-        // 2. Fail -> Put in queue
-        log.info("LockService: Lock '{}' occupied. Putting in queue [token={}]", lockName, tokenId);
+        // WAITING PATH: Enqueue and keep connection open
+        log.info("LockService: Lock '{}' occupied. Enqueueing request [token={}]", lockName, tokenId);
         lockManager.enqueue(lockName, tokenId);
 
-        return new LockResponseDto(
+        // Store emitter for subsequent handover notification
+        activeEmitters.put(tokenId, emitter);
+
+        // Send initial QUEUED event
+        sendSseEvent(emitter, new LockResponseDto(
                 lockName,
                 tokenId,
                 LockStatus.QUEUED,
                 null,
                 "Lock is occupied; request placed in FIFO queue"
-        );
+        ));
+
+        // SAFETY ON TIMEOUT: Revokes internally and closes
+        emitter.onTimeout(() -> {
+            log.warn("LockService: SSE timeout for '{}' [token={}]. Revoking internally.", lockName, tokenId);
+            activeEmitters.remove(tokenId);
+            revokeLock(lockName, tokenId);
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {}
+        });
+
+        // SAFETY ON ERROR / CLIENT DISCONNECT: Revokes internally
+        emitter.onError((ex) -> {
+            log.warn("LockService: SSE disconnect/error for '{}' [token={}]. Revoking internally.", lockName, tokenId);
+            activeEmitters.remove(tokenId);
+            revokeLock(lockName, tokenId);
+        });
+
+        emitter.onCompletion(() -> {
+            activeEmitters.remove(tokenId);
+        });
+
+        // Immediate check in case the lock was freed in this exact millisecond
+        triggerQueueHandover(lockName);
+
+        return emitter;
     }
 
     /**
-     * Removes current lock request and signals the next waiting request if present.
-     *
-     * @param lockName name of the locked resource
-     * @param tokenId  ownership token proving caller owns the lock
-     * @return LockResponseDto with RELEASED status
+     * 2. RELEASE:
+     * - Validates token against active lock.
+     * - Deletes active lock key.
+     * - Triggers queueLockAcquire to hand over to next waiter.
      */
     public LockResponseDto releaseLock(String lockName, String tokenId) {
         if (lockName == null || lockName.isBlank()) {
@@ -77,25 +116,25 @@ public class LockService {
             throw new IllegalArgumentException("Token ID must not be blank");
         }
 
-        log.info("LockService: Releasing lock for resource '{}' [token={}]", lockName, tokenId);
+        log.info("LockService: Release requested for '{}' [token={}]", lockName, tokenId);
 
-        // 1. Remove current request (release lock)
         boolean released = lockManager.release(lockName, tokenId);
 
         if (!released) {
             if (lockManager.isLocked(lockName)) {
-                log.warn("LockService: Unauthorized release attempt on lock '{}' with invalid token '{}'", lockName, tokenId);
+                log.warn("LockService: Unauthorized release on '{}' with token '{}'", lockName, tokenId);
                 throw new LockException.UnauthorizedRelease(lockName, tokenId);
             } else {
-                log.warn("LockService: Release failed for lock '{}': lock does not exist or has expired", lockName);
+                log.warn("LockService: Release failed for '{}': lock does not exist or expired", lockName);
                 throw new LockException.NotFound(lockName);
             }
         }
 
-        // 2. Signal next request if present
-        lockManager.signalNext(lockName);
+        log.info("LockService: Lock '{}' released successfully. Triggering queue handover.", lockName);
 
-        log.info("LockService: Lock '{}' released successfully and signaled next request [token={}]", lockName, tokenId);
+        // Hand over lock to the next waiter in line
+        triggerQueueHandover(lockName);
+
         return new LockResponseDto(
                 lockName,
                 tokenId,
@@ -106,14 +145,10 @@ public class LockService {
     }
 
     /**
-     * Revokes a request:
-     * 1. If currently held (acquired), releases lock and signals next in queue.
-     * 2. If queued, removes the request from the queue.
-     * 3. Otherwise, returns not found / failed.
-     *
-     * @param lockName name of the locked resource
-     * @param tokenId  ownership token to revoke
-     * @return LockResponseDto with the revoke outcome
+     * 3. REVOKE:
+     * - If token holds the active lock -> delegates to releaseLock() internally!
+     * - If token is in the queue -> removes from queue.
+     * - If neither -> returns not found.
      */
     public LockResponseDto revokeLock(String lockName, String tokenId) {
         if (lockName == null || lockName.isBlank()) {
@@ -125,27 +160,22 @@ public class LockService {
 
         log.info("LockService: Revoke requested for resource '{}' [token={}]", lockName, tokenId);
 
-        // 1. Check if the lock is currently held by this token
-        String currentOwner = lockManager.getLockOwner(lockName);
-        if (tokenId.equals(currentOwner)) {
-            log.info("LockService: Token '{}' is current holder of '{}'. Releasing active lock.", tokenId, lockName);
-            boolean released = lockManager.release(lockName, tokenId);
-            if (released) {
-                lockManager.signalNext(lockName);
-                return new LockResponseDto(
-                        lockName,
-                        tokenId,
-                        LockStatus.RELEASED,
-                        null,
-                        "Active lock was revoked and released successfully; next waiter signaled"
-                );
-            }
+        int outcome = lockManager.revoke(lockName, tokenId);
+
+        // Remove from active emitters map if present
+        SseEmitter emitter = activeEmitters.remove(tokenId);
+        if (emitter != null) {
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {}
         }
 
-        // 2. Check if the token is waiting in the FIFO queue
-        boolean removedFromQueue = lockManager.removeTokenFromQueue(lockName, tokenId);
-        if (removedFromQueue) {
-            log.info("LockService: Token '{}' revoked from queue for resource '{}'", tokenId, lockName);
+        if (outcome == 1) {
+            // Token is active holder: Call release service internally!
+            log.info("LockService: Token '{}' holds the lock. Delegating to releaseLock() internally.", tokenId);
+            return releaseLock(lockName, tokenId);
+        } else if (outcome == 2) {
+            log.info("LockService: Token '{}' revoked and removed from queue for '{}'", tokenId, lockName);
             return new LockResponseDto(
                     lockName,
                     tokenId,
@@ -153,17 +183,55 @@ public class LockService {
                     null,
                     "Queued request was revoked and removed from the queue successfully"
             );
+        } else {
+            log.warn("LockService: Revoke failed. Token '{}' not found for lock '{}'", tokenId, lockName);
+            return new LockResponseDto(
+                    lockName,
+                    tokenId,
+                    LockStatus.FAILED,
+                    null,
+                    "Request not found: token is neither holding the lock nor waiting in queue"
+            );
         }
+    }
 
-        // 3. Neither held nor in queue
-        log.warn("LockService: Revoke failed. Token '{}' not found for lock '{}'", tokenId, lockName);
-        return new LockResponseDto(
-                lockName,
-                tokenId,
-                LockStatus.FAILED,
-                null,
-                "Request not found: token is neither holding the lock nor waiting in queue"
-        );
+    /**
+     * 4. HANDOVER ENGINE:
+     * Executes queueLockAcquire. If a valid waiter won the lock, pushes ACQUIRED event
+     * to its open SSE stream and closes the connection!
+     */
+    public void triggerQueueHandover(String lockName) {
+        String winningTokenId = lockManager.queueLockAcquire(lockName);
+
+        if (winningTokenId != null && !winningTokenId.isBlank()) {
+            log.info("LockService: Queue handover granted lock '{}' to token '{}'", lockName, winningTokenId);
+
+            SseEmitter waitingEmitter = activeEmitters.remove(winningTokenId);
+            if (waitingEmitter != null) {
+                sendSseEvent(waitingEmitter, new LockResponseDto(
+                        lockName,
+                        winningTokenId,
+                        LockStatus.ACQUIRED,
+                        null,
+                        "Lock acquired from queue successfully"
+                ));
+                waitingEmitter.complete(); // Connection closes now that lock is acquired!
+            } else {
+                // If waiting client had disconnected, pass the lock to the next waiter
+                log.warn("LockService: Client for granted token '{}' already disconnected. Releasing to next.", winningTokenId);
+                releaseLock(lockName, winningTokenId);
+            }
+        }
+    }
+
+    private void sendSseEvent(SseEmitter emitter, LockResponseDto response) {
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("lock-event")
+                    .data(response, MediaType.APPLICATION_JSON));
+        } catch (IOException e) {
+            log.warn("LockService: Failed to send SSE event for token '{}': {}", response.tokenId(), e.getMessage());
+        }
     }
 
     public LockManager getLockManager() {

@@ -10,7 +10,7 @@ import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Low-level Redis Store handling atomic lock operations using unified Lua scripts.
+ * Low-level Redis Store executing the 5 single-purpose Lua scripts.
  */
 @Slf4j
 @Component
@@ -18,30 +18,32 @@ public class RedisLockStore {
 
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<Long> acquireLockScript;
+    private final RedisScript<Long> enqueueLockScript;
     private final RedisScript<Long> releaseLockScript;
+    private final RedisScript<Long> revokeLockScript;
+    private final RedisScript<String> queueLockAcquireScript;
 
     public RedisLockStore(StringRedisTemplate redisTemplate,
                           RedisScript<Long> acquireLockScript,
-                          RedisScript<Long> releaseLockScript) {
+                          RedisScript<Long> enqueueLockScript,
+                          RedisScript<Long> releaseLockScript,
+                          RedisScript<Long> revokeLockScript,
+                          RedisScript<String> queueLockAcquireScript) {
         this.redisTemplate = redisTemplate;
         this.acquireLockScript = acquireLockScript;
+        this.enqueueLockScript = enqueueLockScript;
         this.releaseLockScript = releaseLockScript;
+        this.revokeLockScript = revokeLockScript;
+        this.queueLockAcquireScript = queueLockAcquireScript;
     }
 
     public static final String LOCK_KEY_PREFIX = "lock:";
     public static final String QUEUE_KEY_PREFIX = "lock:queue:";
 
     /**
-     * Atomically acquires a lock if it is free and either:
-     * 1. No queue exists (direct acquire), OR
-     * 2. This tokenId is at the head of the FIFO queue (queue handover).
-     *
-     * @param lockName       name of the resource
-     * @param tokenId        generated unique ownership token
-     * @param timeoutSeconds lock expiration duration (TTL)
-     * @return true if acquired, false if held by another or not at head of queue
+     * 1. Direct acquire only: Tries to acquire lock if free and queue is empty.
      */
-    public boolean acquireLock(String lockName, String tokenId, long timeoutSeconds) {
+    public boolean acquireDirect(String lockName, String tokenId, long timeoutSeconds) {
         String lockKey = formatLockKey(lockName);
         String queueKey = formatQueueKey(lockName);
 
@@ -52,27 +54,38 @@ public class RedisLockStore {
                     tokenId,
                     String.valueOf(timeoutSeconds)
             );
-            boolean acquired = result != null && result == 1L;
-            if (acquired) {
-                log.info("Lock acquired successfully: key='{}', tokenId='{}', ttl={}s", lockKey, tokenId, timeoutSeconds);
-            } else {
-                log.debug("Lock acquire rejected (held or not head of queue): key='{}', token='{}'", lockKey, tokenId);
-            }
-            return acquired;
+            return result != null && result == 1L;
         } catch (Exception ex) {
-            log.error("Error executing atomic acquire script for lock '{}': {}", lockName, ex.getMessage(), ex);
+            log.error("RedisLockStore: Error executing acquireLockScript for '{}': {}", lockName, ex.getMessage(), ex);
             return false;
         }
     }
 
     /**
-     * Atomically releases the lock only if the provided tokenId matches the owner.
-     *
-     * @param lockName name of the resource
-     * @param tokenId  ownership token to authenticate release
-     * @return true if lock was deleted, false if expired or token mismatch
+     * 2. Enqueue only: Appends tokenId#timestamp to queue list.
      */
-    public boolean releaseLock(String lockName, String tokenId) {
+    public boolean enqueue(String lockName, String tokenId, long currentTimeMillis, long queueSafetyTtlSeconds) {
+        String queueKey = formatQueueKey(lockName);
+
+        try {
+            Long result = redisTemplate.execute(
+                    enqueueLockScript,
+                    Collections.singletonList(queueKey),
+                    tokenId,
+                    String.valueOf(currentTimeMillis),
+                    String.valueOf(queueSafetyTtlSeconds)
+            );
+            return result != null && result == 1L;
+        } catch (Exception ex) {
+            log.error("RedisLockStore: Error executing enqueueLockScript for '{}': {}", lockName, ex.getMessage(), ex);
+            return false;
+        }
+    }
+
+    /**
+     * 3. Release only: Deletes active lock key if token matches.
+     */
+    public boolean release(String lockName, String tokenId) {
         String lockKey = formatLockKey(lockName);
 
         try {
@@ -81,45 +94,64 @@ public class RedisLockStore {
                     Collections.singletonList(lockKey),
                     tokenId
             );
-            boolean released = result != null && result == 1L;
-            if (released) {
-                log.info("Lock released successfully: key='{}', tokenId='{}'", lockKey, tokenId);
-            } else {
-                log.warn("Lock release failed (token mismatch or already expired): key='{}', tokenId='{}'", lockKey, tokenId);
-            }
-            return released;
+            return result != null && result == 1L;
         } catch (Exception ex) {
-            log.error("Error executing atomic release script for lock '{}': {}", lockName, ex.getMessage(), ex);
+            log.error("RedisLockStore: Error executing releaseLockScript for '{}': {}", lockName, ex.getMessage(), ex);
             return false;
         }
     }
 
     /**
-     * Checks if a lock currently exists in Redis (safe boolean check, does not expose tokenId).
+     * 4. Revoke only: Checks if holding lock (1), removes from queue (2), or not found (0).
+     */
+    public int revoke(String lockName, String tokenId) {
+        String lockKey = formatLockKey(lockName);
+        String queueKey = formatQueueKey(lockName);
+
+        try {
+            Long result = redisTemplate.execute(
+                    revokeLockScript,
+                    Arrays.asList(lockKey, queueKey),
+                    tokenId
+            );
+            return result != null ? result.intValue() : 0;
+        } catch (Exception ex) {
+            log.error("RedisLockStore: Error executing revokeLockScript for '{}': {}", lockName, ex.getMessage(), ex);
+            return 0;
+        }
+    }
+
+    /**
+     * 5. Queue lock acquire: Hands over freed lock to first fresh waiter in queue.
+     * Returns winning tokenId, or empty string if none.
+     */
+    public String queueLockAcquire(String lockName, long lockTimeoutSeconds, long queueTimeoutMillis, long currentTimeMillis) {
+        String lockKey = formatLockKey(lockName);
+        String queueKey = formatQueueKey(lockName);
+
+        try {
+            String winningToken = redisTemplate.execute(
+                    queueLockAcquireScript,
+                    Arrays.asList(lockKey, queueKey),
+                    String.valueOf(lockTimeoutSeconds),
+                    String.valueOf(queueTimeoutMillis),
+                    String.valueOf(currentTimeMillis)
+            );
+            return winningToken != null ? winningToken.trim() : "";
+        } catch (Exception ex) {
+            log.error("RedisLockStore: Error executing queueLockAcquireScript for '{}': {}", lockName, ex.getMessage(), ex);
+            return "";
+        }
+    }
+
+    /**
+     * Checks if a lock currently exists in Redis.
      */
     public boolean isLocked(String lockName) {
         Boolean exists = redisTemplate.hasKey(formatLockKey(lockName));
         return Boolean.TRUE.equals(exists);
     }
 
-    /**
-     * Gets remaining TTL for the lock in seconds (-2 if does not exist, -1 if no TTL).
-     */
-    public Long getRemainingTtl(String lockName) {
-        return redisTemplate.getExpire(formatLockKey(lockName), TimeUnit.SECONDS);
-    }
-
-    /**
-     * INTERNAL SYSTEM USE ONLY.
-     * Package-private: Inaccessible to controllers or external packages.
-     * Used exclusively by the DeadlockDetector to terminate circular wait deadlocks.
-     */
-    boolean internalForceRelease(String lockName) {
-        String lockKey = formatLockKey(lockName);
-        Boolean deleted = redisTemplate.delete(lockKey);
-        log.warn("SYSTEM: Force release executed on lock key='{}', deleted={}", lockKey, deleted);
-        return Boolean.TRUE.equals(deleted);
-    }
 
     public String formatLockKey(String lockName) {
         return LOCK_KEY_PREFIX + lockName;

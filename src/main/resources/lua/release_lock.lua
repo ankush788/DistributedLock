@@ -1,11 +1,21 @@
--- KEYS[1]: lock key (e.g. "lock:inventory-123")
--- ARGV[1]: tokenId (expected ownership token)
+-- ============================================================================
+-- 3. RELEASE SCRIPT (release_lock.lua)
+-- ============================================================================
+-- SINGLE PURPOSE:
+-- Verifies that the provided tokenId matches the active lock holder.
+-- If verified, deletes the active lock key. Does not touch the queue.
+--
+-- KEYS[1]: lock key (e.g. "lock:order-123")
+-- ARGV[1]: tokenId (ownership token attempting release)
+--
+-- RETURNS:
+--   1 -> RELEASED (Lock verified and deleted successfully)
+--   0 -> FAILED (Token mismatch or lock already expired)
+-- ============================================================================
 
--- 1. Check if the lock key exists and the token matches the owner
 if redis.call('GET', KEYS[1]) == ARGV[1] then
-    -- Atomically delete the lock
-    return redis.call('DEL', KEYS[1])
+    redis.call('DEL', KEYS[1])
+    return 1
 else
-    -- Lock missing (expired) or token mismatch (unauthorized release)
     return 0
 end

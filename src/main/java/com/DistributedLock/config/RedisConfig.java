@@ -7,7 +7,6 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
-
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 @Configuration
@@ -22,7 +21,7 @@ public class RedisConfig {
     }
 
     /**
-     * Configures the RedisMessageListenerContainer for asynchronous Pub/Sub messaging.
+     * Configures the RedisMessageListenerContainer for asynchronous Pub/Sub and keyspace expiration messaging.
      */
     @Bean
     public RedisMessageListenerContainer redisMessageListenerContainer(RedisConnectionFactory connectionFactory) {
@@ -32,7 +31,7 @@ public class RedisConfig {
     }
 
     /**
-     * Pre-loads and compiles the unified Lua script for atomic lock acquisition (direct or from queue head).
+     * 1. Script for direct lock acquisition.
      */
     @Bean
     public RedisScript<Long> acquireLockScript() {
@@ -43,13 +42,47 @@ public class RedisConfig {
     }
 
     /**
-     * Pre-loads and compiles the Lua script for owner-verified lock release.
+     * 2. Script for putting waiting requests in FIFO queue.
+     */
+    @Bean
+    public RedisScript<Long> enqueueLockScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("lua/enqueue_lock.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    /**
+     * 3. Script for owner-verified lock release.
      */
     @Bean
     public RedisScript<Long> releaseLockScript() {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();
         script.setLocation(new ClassPathResource("lua/release_lock.lua"));
         script.setResultType(Long.class);
+        return script;
+    }
+
+    /**
+     * 4. Script for atomic lock/queue revocation.
+     */
+    @Bean
+    public RedisScript<Long> revokeLockScript() {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("lua/revoke_lock.lua"));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    /**
+     * 5. Script for queue lock acquisition and handover.
+     * Returns the winning tokenId as a String.
+     */
+    @Bean
+    public RedisScript<String> queueLockAcquireScript() {
+        DefaultRedisScript<String> script = new DefaultRedisScript<>();
+        script.setLocation(new ClassPathResource("lua/queue_lock_acquire.lua"));
+        script.setResultType(String.class);
         return script;
     }
 }
