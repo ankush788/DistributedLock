@@ -39,6 +39,7 @@ public class LockService {
         }
 
         long queueTimeoutMillis = lockManager.getDefaultQueueTimeoutMillis();
+        //initializes the SSE stream with a specific lifespan:
         SseEmitter emitter = new SseEmitter(queueTimeoutMillis);
         String tokenId = UUID.randomUUID().toString();
 
@@ -131,9 +132,12 @@ public class LockService {
         }
 
         log.info("LockService: Lock '{}' released successfully. Triggering queue handover.", lockName);
-
         // Hand over lock to the next waiter in line
         triggerQueueHandover(lockName);
+        
+        // Ensure any active SSE connection for this token is cleanly closed and removed
+        log.info("{} is remove from active emitter",tokenId);
+        closeAndRemoveEmitter(tokenId);
 
         return new LockResponseDto(
                 lockName,
@@ -162,19 +166,15 @@ public class LockService {
 
         int outcome = lockManager.revoke(lockName, tokenId);
 
-        // Remove from active emitters map if present
-        SseEmitter emitter = activeEmitters.remove(tokenId);
-        if (emitter != null) {
-            try {
-                emitter.complete();
-            } catch (Exception ignored) {}
-        }
 
         if (outcome == 1) {
             // Token is active holder: Call release service internally!
             log.info("LockService: Token '{}' holds the lock. Delegating to releaseLock() internally.", tokenId);
             return releaseLock(lockName, tokenId);
         } else if (outcome == 2) {
+            // Ensure any active SSE connection for this token is cleanly closed and removed
+            log.info("{} is remove from active emitter",tokenId);
+            closeAndRemoveEmitter(tokenId);
             log.info("LockService: Token '{}' revoked and removed from queue for '{}'", tokenId, lockName);
             return new LockResponseDto(
                     lockName,
@@ -221,6 +221,15 @@ public class LockService {
                 log.warn("LockService: Client for granted token '{}' already disconnected. Releasing to next.", winningTokenId);
                 releaseLock(lockName, winningTokenId);
             }
+        }
+    }
+
+    private void closeAndRemoveEmitter(String tokenId) {
+        SseEmitter emitter = activeEmitters.remove(tokenId);
+        if (emitter != null) {
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {}
         }
     }
 

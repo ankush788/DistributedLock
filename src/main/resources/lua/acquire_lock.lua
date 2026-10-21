@@ -16,11 +16,7 @@
 -- ============================================================================
 
 local lockExists = redis.call('EXISTS', KEYS[1])
-local queueLen = 0
-
-if redis.call('EXISTS', KEYS[2]) == 1 then
-    queueLen = redis.call('LLEN', KEYS[2])
-end
+local queueLen = redis.call('LLEN', KEYS[2])
 
 if lockExists == 0 and queueLen == 0 then
     -- Lock is free and line is empty -> Acquire immediately!
