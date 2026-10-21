@@ -1,21 +1,21 @@
-// normal 
-curl -X POST http://localhost:8080/api/v1/locks/acquire `
-  -H "Content-Type: application/json" `
-  -d '{"lockName": "inventory-101"}'
+# Acquire
+curl -N "http://localhost:8080/api/v1/locks/acquire?lockName=order-100"
+
+# Release
+curl -X POST "http://localhost:8080/api/v1/locks/release" \
+     -H "Content-Type: application/json" \
+     -d '{"lockName": "order-100", "tokenId": "<TOKEN_ID>"}'
+
+# Revoke
+curl -X POST "http://localhost:8080/api/v1/locks/revoke" \
+     -H "Content-Type: application/json" \
+     -d '{"lockName": "order-100", "tokenId": "<TOKEN_ID>"}'
 
 
-// for queue
-curl -X POST http://localhost:8080/api/v1/locks/acquire `
-  -H "Content-Type: application/json" `
-  -d '{"lockName": "inventory-101"}'
+# Powershell curls :-
 
-// relase (fake token)
-curl -X POST http://localhost:8080/api/v1/locks/release `
-  -H "Content-Type: application/json" `
-  -d '{"lockName": "inventory-101", "tokenId": "fake-token-999"}'
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=order-100"
 
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/release" -Method Post -ContentType "application/json" -Body '{"lockName":"order-100","tokenId":"PASTE_TOKEN_HERE"}'
 
-// relase (real token)
-curl -X POST http://localhost:8080/api/v1/locks/release `
-  -H "Content-Type: application/json" `
-  -d '{"lockName": "inventory-101", "tokenId": "3fa85f64-5717-4562-b3fc-2c963f66afa6"}'
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/revoke" -Method Post -ContentType "application/json" -Body '{"lockName":"order-100","tokenId":"PASTE_TOKEN_HERE"}'
