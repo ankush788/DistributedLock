@@ -17,8 +17,8 @@ public class LockManager {
     @Value("${distributed-lock.default-timeout-seconds:30}")
     private long defaultLockTimeoutSeconds;
 
-    @Value("${distributed-lock.default-queue-timeout-seconds:10}")
-    private long defaultQueueTimeoutSeconds;
+    @Value("${distributed-lock.queue-timeout-ms:60000}")
+    private long queueTimeoutMillis;
 
     @Value("${distributed-lock.queue-safety-ttl-ms:86400000}")
     private long queueSafetyTtlMs;
@@ -61,7 +61,6 @@ public class LockManager {
      * Returns winning tokenId, or empty string if none.
      */
     public String queueLockAcquire(String lockName) {
-        long queueTimeoutMillis = defaultQueueTimeoutSeconds * 1000;
         return redisLockStore.queueLockAcquire(
                 lockName,
                 defaultLockTimeoutSeconds,
@@ -75,9 +74,5 @@ public class LockManager {
      */
     public boolean isLocked(String lockName) {
         return redisLockStore.isLocked(lockName);
-    }
-
-    public long getDefaultQueueTimeoutMillis() {
-        return defaultQueueTimeoutSeconds * 1000;
     }
 }

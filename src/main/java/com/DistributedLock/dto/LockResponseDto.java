@@ -22,6 +22,7 @@ public record LockResponseDto(
         FAILED,
         RELEASED,
         REVOKED,
+        TIMEOUT,
         DEADLOCK_DETECTED
     }
 }
