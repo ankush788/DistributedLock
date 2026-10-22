@@ -1,0 +1,134 @@
+2026-10-22T06:32:42.565Z  INFO 11060 --- [distributed-lock-service] [restartedMain] c.D.DistributedLockApplication           : Starting DistributedLockApplication using Java 21.0.10 with PID 11060 (D:\Ankush Files\Java\DistributedLock\target\classes started by 3099381 in D:\Ankush Files\Java\DistributedLock)
+2026-10-22T06:32:42.569Z DEBUG 11060 --- [distributed-lock-service] [restartedMain] c.D.DistributedLockApplication           : Running with Spring Boot v3.5.16, Spring v6.2.19
+2026-10-22T06:32:42.571Z  INFO 11060 --- [distributed-lock-service] [restartedMain] c.D.DistributedLockApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-10-22T06:32:42.699Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : Devtools property defaults active! Set 'spring.devtools.add-properties' to 'false' to disable
+2026-10-22T06:32:42.700Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .e.DevToolsPropertyDefaultsPostProcessor : For additional web related logging consider setting the 'logging.level.web' property to 'DEBUG'
+2026-10-22T06:32:46.658Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-10-22T06:32:46.664Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-10-22T06:32:46.714Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 25 ms. Found 0 JPA repository interfaces.
+2026-10-22T06:32:46.755Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-10-22T06:32:46.757Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2026-10-22T06:32:46.786Z  INFO 11060 --- [distributed-lock-service] [restartedMain] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 3 ms. Found 0 Redis repository interfaces.
+2026-10-22T06:32:48.036Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-10-22T06:32:48.067Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-10-22T06:32:48.068Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.55]
+2026-10-22T06:32:48.190Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-10-22T06:32:48.190Z  INFO 11060 --- [distributed-lock-service] [restartedMain] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 5487 ms
+2026-10-22T06:32:48.657Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-10-22T06:32:48.842Z  INFO 11060 --- [distributed-lock-service] [restartedMain] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.6.53.Final
+2026-10-22T06:32:48.948Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-10-22T06:32:49.980Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-10-22T06:32:50.084Z  INFO 11060 --- [distributed-lock-service] [restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-10-22T06:32:50.496Z  INFO 11060 --- [distributed-lock-service] [restartedMain] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@2f873e59
+2026-10-22T06:32:50.499Z  INFO 11060 --- [distributed-lock-service] [restartedMain] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-10-22T06:32:50.578Z  WARN 11060 --- [distributed-lock-service] [restartedMain] org.hibernate.orm.deprecation            : HHH90000025: PostgreSQLDialect does not need to be specified explicitly using 'hibernate.dialect' (remove the property setting and it will be selected by default)
+2026-10-22T06:32:50.629Z  INFO 11060 --- [distributed-lock-service] [restartedMain] org.hibernate.orm.connections.pooling    : HHH10001005: Database info:
+	Database JDBC URL [Connecting through datasource 'HikariDataSource (HikariPool-1)']
+	Database driver: undefined/unknown
+	Database version: 16.15
+	Autocommit mode: undefined/unknown
+	Isolation level: undefined/unknown
+	Minimum pool size: undefined/unknown
+	Maximum pool size: undefined/unknown
+2026-10-22T06:32:51.457Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-10-22T06:32:51.477Z  INFO 11060 --- [distributed-lock-service] [restartedMain] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-10-22T06:32:52.248Z  INFO 11060 --- [distributed-lock-service] [restartedMain] c.D.service.RedisKeyExpirationListener   : RedisKeyExpirationListener subscribed to '__keyevent@*__:expired'
+2026-10-22T06:32:53.090Z  INFO 11060 --- [distributed-lock-service] [restartedMain] c.D.service.RedisKeyExpirationListener   : Configured Redis notify-keyspace-events='Ex'
+2026-10-22T06:32:53.257Z  WARN 11060 --- [distributed-lock-service] [restartedMain] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning
+2026-10-22T06:32:54.289Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.s.b.d.a.OptionalLiveReloadServer       : LiveReload server is running on port 35729
+2026-10-22T06:32:54.298Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint beneath base path '/actuator'
+2026-10-22T06:32:54.392Z  INFO 11060 --- [distributed-lock-service] [restartedMain] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-10-22T06:32:54.547Z  INFO 11060 --- [distributed-lock-service] [restartedMain] c.D.DistributedLockApplication           : Started DistributedLockApplication in 13.024 seconds (process running for 15.965)
+2026-10-22T06:33:00.620Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-10-22T06:33:00.620Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-10-22T06:33:00.621Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms
+2026-10-22T06:33:00.757Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-1] c.D.controller.LockController            : REST SSE (GET): Lock acquire request for resource 'order-100'
+2026-10-22T06:33:00.759Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-1] c.DistributedLock.service.LockService    : LockService: Acquire requested for resource 'order-100' [token=df76bc6f-25f2-404a-840e-ec55cae8aa56]
+2026-10-22T06:33:00.848Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-1] c.DistributedLock.service.LockService    : LockService: Direct acquire succeeded for 'order-100' [token=df76bc6f-25f2-404a-840e-ec55cae8aa56]
+2026-10-22T06:33:13.878Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-3] c.D.controller.LockController            : REST SSE (GET): Lock acquire request for resource 'order-100'
+2026-10-22T06:33:13.879Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-3] c.DistributedLock.service.LockService    : LockService: Acquire requested for resource 'order-100' [token=9923afe6-45d3-4ab8-95ec-14dd9a1c1b8e]
+2026-10-22T06:33:13.881Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-3] c.DistributedLock.service.LockService    : LockService: Lock 'order-100' occupied. Enqueueing request [token=9923afe6-45d3-4ab8-95ec-14dd9a1c1b8e]
+2026-10-22T06:34:14.392Z  WARN 11060 --- [distributed-lock-service] [http-nio-8080-exec-4] c.DistributedLock.service.LockService    : LockService: SSE timeout for 'order-100' [token=9923afe6-45d3-4ab8-95ec-14dd9a1c1b8e]. Revoking internally.
+2026-10-22T06:34:14.393Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-4] c.DistributedLock.service.LockService    : LockService: Revoke requested for resource 'order-100' [token=9923afe6-45d3-4ab8-95ec-14dd9a1c1b8e]
+2026-10-22T06:34:14.401Z  INFO 11060 --- [distributed-lock-service] [http-nio-8080-exec-4] c.DistributedLock.service.LockService    : LockService: Token '9923afe6-45d3-4ab8-95ec-14dd9a1c1b8e' revoked and removed from queue for 'order-100'
+2026-10-22T06:34:14.408Z ERROR 11060 --- [distributed-lock-service] [http-nio-8080-exec-4] c.D.exception.GlobalExceptionHandler     : Unhandled System Exception on /api/v1/locks/acquire: null
+
+org.springframework.web.context.request.async.AsyncRequestTimeoutException
+	at org.springframework.web.context.request.async.TimeoutDeferredResultProcessingInterceptor.handleTimeout(TimeoutDeferredResultProcessingInterceptor.java:42) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.springframework.web.context.request.async.DeferredResultInterceptorChain.triggerAfterTimeout(DeferredResultInterceptorChain.java:81) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.springframework.web.context.request.async.WebAsyncManager.lambda$startDeferredResultProcessing$5(WebAsyncManager.java:434) ~[spring-web-6.2.19.jar:6.2.19]
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596) ~[na:na]
+	at org.springframework.web.context.request.async.StandardServletAsyncWebRequest.onTimeout(StandardServletAsyncWebRequest.java:186) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.apache.catalina.core.AsyncListenerWrapper.fireOnTimeout(AsyncListenerWrapper.java:44) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.AsyncContextImpl.timeout(AsyncContextImpl.java:136) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.connector.CoyoteAdapter.asyncDispatch(CoyoteAdapter.java:133) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.coyote.AbstractProcessor.dispatch(AbstractProcessor.java:243) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:57) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:1272) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1797) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:973) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:491) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+
+2026-10-22T06:34:14.430Z  WARN 11060 --- [distributed-lock-service] [http-nio-8080-exec-4] .m.m.a.ExceptionHandlerExceptionResolver : Failure in @ExceptionHandler com.DistributedLock.exception.GlobalExceptionHandler#handleUnexpectedException(Exception, HttpServletRequest)
+
+org.springframework.http.converter.HttpMessageNotWritableException: No converter for [class com.DistributedLock.dto.ErrorResponseDto] with preset Content-Type 'text/event-stream'
+	at org.springframework.web.servlet.mvc.method.annotation.AbstractMessageConverterMethodProcessor.writeWithMessageConverters(AbstractMessageConverterMethodProcessor.java:364) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.mvc.method.annotation.HttpEntityMethodProcessor.handleReturnValue(HttpEntityMethodProcessor.java:263) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.method.support.HandlerMethodReturnValueHandlerComposite.handleReturnValue(HandlerMethodReturnValueHandlerComposite.java:78) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:136) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver.doResolveHandlerMethodException(ExceptionHandlerExceptionResolver.java:471) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.handler.AbstractHandlerMethodExceptionResolver.doResolveException(AbstractHandlerMethodExceptionResolver.java:73) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.handler.AbstractHandlerExceptionResolver.resolveException(AbstractHandlerExceptionResolver.java:182) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.handler.HandlerExceptionResolverComposite.resolveException(HandlerExceptionResolverComposite.java:80) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.DispatcherServlet.processHandlerException(DispatcherServlet.java:1360) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.DispatcherServlet.processDispatchResult(DispatcherServlet.java:1161) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1106) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564) ~[tomcat-embed-core-10.1.55.jar:6.0]
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885) ~[spring-webmvc-6.2.19.jar:6.2.19]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658) ~[tomcat-embed-core-10.1.55.jar:6.0]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:193) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:138) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:162) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:138) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:101) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:162) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:138) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:110) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:162) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:138) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:101) ~[spring-web-6.2.19.jar:6.2.19]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:162) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:138) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationDispatcher.invoke(ApplicationDispatcher.java:610) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationDispatcher.doDispatch(ApplicationDispatcher.java:538) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.ApplicationDispatcher.dispatch(ApplicationDispatcher.java:509) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.AsyncContextImpl$AsyncRunnable.run(AsyncContextImpl.java:599) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.AsyncContextImpl.doInternalDispatch(AsyncContextImpl.java:342) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:163) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:88) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:492) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:113) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:83) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:72) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.catalina.connector.CoyoteAdapter.asyncDispatch(CoyoteAdapter.java:237) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.coyote.AbstractProcessor.dispatch(AbstractProcessor.java:243) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:57) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:1272) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1797) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:973) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:491) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63) ~[tomcat-embed-core-10.1.55.jar:10.1.55]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+
+2026-10-22T06:34:14.432Z  WARN 11060 --- [distributed-lock-service] [http-nio-8080-exec-4] .w.s.m.s.DefaultHandlerExceptionResolver : Ignoring exception, response committed already: org.springframework.web.context.request.async.AsyncRequestTimeoutException
+2026-10-22T06:34:14.433Z  WARN 11060 --- [distributed-lock-service] [http-nio-8080-exec-4] .w.s.m.s.DefaultHandlerExceptionResolver : Resolved [org.springframework.web.context.request.async.AsyncRequestTimeoutException]

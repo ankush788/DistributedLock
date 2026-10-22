@@ -12,7 +12,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Service coordinating single-responsibility lock operations and SSE streaming.
@@ -23,8 +23,6 @@ public class LockService {
 
     private final LockManager lockManager;
     private final Map<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
-    private final Map<String, ScheduledFuture<?>> activeTimeoutTasks = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService timeoutScheduler = Executors.newScheduledThreadPool(2);
 
     @Value("${distributed-lock.sse-timeout-ms:60000}")
     private long sseTimeoutMillis;
@@ -36,16 +34,15 @@ public class LockService {
     /**
      * 1. ACQUIRE (SSE STREAMING):
      * - Fast path: Direct acquire -> sends ACQUIRED event and CLOSES connection immediately.
-     * - Waiting path: Enqueued -> sends QUEUED event and KEEPS connection open at 0% CPU.
-     * - Safety: Disconnect/timeout sends reason event, revokes from Redis, and closes connection.
+     * - Waiting path: Enqueued -> sends QUEUED event and KEEPS connection open.
+     * - Safety: Disconnect/timeout automatically revokes from Redis and cleans memory.
      */
     public SseEmitter acquireLock(String lockName) {
         if (lockName == null || lockName.isBlank()) {
             throw new IllegalArgumentException("Lock name must not be blank");
         }
 
-        // 0L disables container-level timeout so our scheduler precisely controls the timeout at sseTimeoutMillis
-        SseEmitter emitter = new SseEmitter(0L);
+        SseEmitter emitter = new SseEmitter(sseTimeoutMillis);
         String tokenId = UUID.randomUUID().toString();
 
         log.info("LockService: Acquire requested for resource '{}' [token={}]", lockName, tokenId);
@@ -69,23 +66,7 @@ public class LockService {
         log.info("LockService: Lock '{}' occupied. Enqueueing request [token={}]", lockName, tokenId);
         lockManager.enqueue(lockName, tokenId);
 
-        // Store emitter for subsequent handover notification
         activeEmitters.put(tokenId, emitter);
-
-        // Schedule timeout so TIMEOUT event is delivered over open stream before closing
-        ScheduledFuture<?> timeoutTask = timeoutScheduler.schedule(() -> {
-            log.warn("LockService: SSE wait timeout reached for '{}' [token={}]. Sending TIMEOUT event and revoking.", lockName, tokenId);
-            cancelTimeoutTask(tokenId);
-            sendEventAndCloseEmitter(tokenId, new LockResponseDto(
-                    lockName,
-                    tokenId,
-                    LockStatus.TIMEOUT,
-                    null,
-                    "Lock acquisition wait patience timed out"
-            ));
-            revokeLock(lockName, tokenId);
-        }, sseTimeoutMillis, TimeUnit.MILLISECONDS);
-        activeTimeoutTasks.put(tokenId, timeoutTask);
 
         // Send initial QUEUED event
         sendSseEvent(emitter, new LockResponseDto(
@@ -96,27 +77,21 @@ public class LockService {
                 "Lock is occupied; request placed in FIFO queue"
         ));
 
-        // Fallback safety on container timeout
+        // SAFETY ON TIMEOUT: Revokes internally and cleans memory
         emitter.onTimeout(() -> {
-            log.warn("LockService: Fallback container timeout for '{}' [token={}]. Revoking internally.", lockName, tokenId);
-            cancelTimeoutTask(tokenId);
+            log.warn("LockService: SSE timeout for '{}' [token={}]. Revoking internally.", lockName, tokenId);
             activeEmitters.remove(tokenId);
             revokeLock(lockName, tokenId);
-            try {
-                emitter.complete();
-            } catch (Exception ignored) {}
         });
 
-        // SAFETY ON ERROR / CLIENT DISCONNECT: Cancel task, revoke internally
+        // SAFETY ON ERROR / CLIENT DISCONNECT: Revokes internally and cleans memory
         emitter.onError((ex) -> {
             log.warn("LockService: SSE disconnect/error for '{}' [token={}]. Revoking internally.", lockName, tokenId);
-            cancelTimeoutTask(tokenId);
             activeEmitters.remove(tokenId);
             revokeLock(lockName, tokenId);
         });
 
         emitter.onCompletion(() -> {
-            cancelTimeoutTask(tokenId);
             activeEmitters.remove(tokenId);
         });
 
@@ -170,7 +145,7 @@ public class LockService {
     /**
      * 3. REVOKE:
      * - If token holds the active lock -> delegates to releaseLock() internally!
-     * - If token is in the queue -> sends final REVOKED event to the SSE stream and removes from queue.
+     * - If token is in the queue -> removes from queue and closes waiting SSE stream.
      * - If neither -> returns not found.
      */
     public LockResponseDto revokeLock(String lockName, String tokenId) {
@@ -184,24 +159,28 @@ public class LockService {
         log.info("LockService: Revoke requested for resource '{}' [token={}]", lockName, tokenId);
 
         int outcome = lockManager.revoke(lockName, tokenId);
-        cancelTimeoutTask(tokenId);
 
         if (outcome == 1) {
             // Token is active holder: Call release service internally!
             log.info("LockService: Token '{}' holds the lock. Delegating to releaseLock() internally.", tokenId);
             return releaseLock(lockName, tokenId);
         } else if (outcome == 2) {
-            LockResponseDto response = new LockResponseDto(
+            // Close any active waiting SSE connection for this token
+            SseEmitter emitter = activeEmitters.remove(tokenId);
+            if (emitter != null) {
+                try {
+                    emitter.complete();
+                } catch (Exception ignored) {}
+            }
+
+            log.info("LockService: Token '{}' revoked and removed from queue for '{}'", tokenId, lockName);
+            return new LockResponseDto(
                     lockName,
                     tokenId,
                     LockStatus.REVOKED,
                     null,
                     "Queued request was revoked and removed from the queue successfully"
             );
-            // Send final REVOKED event to waiting SSE client before closing connection!
-            sendEventAndCloseEmitter(tokenId, response);
-            log.info("LockService: Token '{}' revoked and removed from queue for '{}'", tokenId, lockName);
-            return response;
         } else {
             log.warn("LockService: Revoke failed. Token '{}' not found for lock '{}'", tokenId, lockName);
             return new LockResponseDto(
@@ -224,7 +203,6 @@ public class LockService {
 
         if (winningTokenId != null && !winningTokenId.isBlank()) {
             log.info("LockService: Queue handover granted lock '{}' to token '{}'", lockName, winningTokenId);
-            cancelTimeoutTask(winningTokenId);
 
             SseEmitter waitingEmitter = activeEmitters.remove(winningTokenId);
             if (waitingEmitter != null) {
@@ -241,32 +219,6 @@ public class LockService {
                 log.warn("LockService: Client for granted token '{}' already disconnected. Releasing to next.", winningTokenId);
                 releaseLock(lockName, winningTokenId);
             }
-        }
-    }
-
-    /**
-     * Sends the final event to the waiting SSE client and completes the connection.
-     */
-    private void sendEventAndCloseEmitter(String tokenId, LockResponseDto response) {
-        cancelTimeoutTask(tokenId);
-        SseEmitter emitter = activeEmitters.remove(tokenId);
-        if (emitter != null) {
-            try {
-                sendSseEvent(emitter, response);
-            } catch (Exception e) {
-                log.warn("LockService: Failed to send final event for token '{}': {}", tokenId, e.getMessage());
-            } finally {
-                try {
-                    emitter.complete();
-                } catch (Exception ignored) {}
-            }
-        }
-    }
-
-    private void cancelTimeoutTask(String tokenId) {
-        ScheduledFuture<?> task = activeTimeoutTasks.remove(tokenId);
-        if (task != null) {
-            task.cancel(false);
         }
     }
 
