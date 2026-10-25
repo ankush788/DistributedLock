@@ -18,6 +18,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * REST API Controller for distributed locking operations.
+ * All operations identify callers via a unique clientId.
  */
 @Slf4j
 @RestController
@@ -37,9 +38,11 @@ public class LockController {
      */
     @GetMapping(value = "/acquire", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "Acquire a distributed lock (SSE via GET)", description = "Streams lock state. Returns immediately if free, or streams until lock is acquired in fair FIFO order.")
-    public SseEmitter acquireLockGet(@RequestParam("lockName") String lockName) {
-        log.info("REST SSE (GET): Lock acquire request for resource '{}'", lockName);
-        return lockService.acquireLock(lockName);
+    public SseEmitter acquireLockGet(
+            @RequestParam("lockName") String lockName,
+            @RequestParam("clientId") String clientId) {
+        log.info("REST SSE (GET): Lock acquire request for resource '{}' [clientId={}]", lockName, clientId);
+        return lockService.acquireLock(lockName, clientId);
     }
 
     /**
@@ -49,23 +52,23 @@ public class LockController {
     @PostMapping(value = "/acquire", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "Acquire a distributed lock (SSE via POST)", description = "Streams lock state. Returns immediately if free, or streams until lock is acquired in fair FIFO order.")
     public SseEmitter acquireLockPost(@Valid @RequestBody LockRequestDto request) {
-        log.info("REST SSE (POST): Lock acquire request for resource '{}'", request.lockName());
-        return lockService.acquireLock(request.lockName());
+        log.info("REST SSE (POST): Lock acquire request for resource '{}' [clientId={}]", request.lockName(), request.clientId());
+        return lockService.acquireLock(request.lockName(), request.clientId());
     }
 
     @PostMapping("/release")
-    @Operation(summary = "Release a distributed lock", description = "Releases lock atomically after verifying token ownership.")
+    @Operation(summary = "Release a distributed lock", description = "Releases lock atomically after verifying client ownership.")
     public ResponseEntity<LockResponseDto> releaseLock(@Valid @RequestBody LockReleaseDto request) {
-        log.info("REST: Lock release request for resource '{}' [token={}]", request.lockName(), request.tokenId());
-        LockResponseDto response = lockService.releaseLock(request.lockName(), request.tokenId());
+        log.info("REST: Lock release request for resource '{}' [clientId={}]", request.lockName(), request.clientId());
+        LockResponseDto response = lockService.releaseLock(request.lockName(), request.clientId());
         return ResponseEntity.ok(response);
     }
 
     @PostMapping("/revoke")
     @Operation(summary = "Revoke a lock request", description = "Removes request from queue if waiting, or releases lock and signals next if currently held.")
     public ResponseEntity<LockResponseDto> revokeLock(@Valid @RequestBody LockRevokeDto request) {
-        log.info("REST: Lock revoke request for resource '{}' [token={}]", request.lockName(), request.tokenId());
-        LockResponseDto response = lockService.revokeLock(request.lockName(), request.tokenId());
+        log.info("REST: Lock revoke request for resource '{}' [clientId={}]", request.lockName(), request.clientId());
+        LockResponseDto response = lockService.revokeLock(request.lockName(), request.clientId());
 
         HttpStatus httpStatus = (response.status() == LockStatus.FAILED)
                 ? HttpStatus.NOT_FOUND

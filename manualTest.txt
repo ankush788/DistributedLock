@@ -1,21 +1,103 @@
-# Acquire
-curl -N "http://localhost:8080/api/v1/locks/acquire?lockName=order-100"
+# ==============================================================================
+# DISTRIBUTED LOCK MANUAL TEST COMMANDS (Using clientId)
+# ==============================================================================
 
-# Release
+# ------------------------------------------------------------------------------
+# 1. BASH / LINUX / MAC (Standard curl)
+# ------------------------------------------------------------------------------
+
+# 1.1 Acquire Lock (SSE GET stream)
+curl -N "http://localhost:8080/api/v1/locks/acquire?lockName=order-100&clientId=client-1"
+
+# 1.2 Acquire Lock (SSE POST stream)
+curl -N -X POST "http://localhost:8080/api/v1/locks/acquire" \
+     -H "Content-Type: application/json" \
+     -d '{"lockName": "order-100", "clientId": "client-1"}'
+
+# 1.3 Release Lock
 curl -X POST "http://localhost:8080/api/v1/locks/release" \
      -H "Content-Type: application/json" \
-     -d '{"lockName": "order-100", "tokenId": "<TOKEN_ID>"}'
+     -d '{"lockName": "order-100", "clientId": "client-1"}'
 
-# Revoke
+# 1.4 Revoke Lock (if holding -> releases; if queued -> cancels)
 curl -X POST "http://localhost:8080/api/v1/locks/revoke" \
      -H "Content-Type: application/json" \
-     -d '{"lockName": "order-100", "tokenId": "<TOKEN_ID>"}'
+     -d '{"lockName": "order-100", "clientId": "client-1"}'
 
 
-# Powershell curls :-
+# ------------------------------------------------------------------------------
+# 2. WINDOWS POWERSHELL (curl.exe & Invoke-RestMethod)
+# ------------------------------------------------------------------------------
 
-curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=order-100"
+# 2.1 Acquire Lock (SSE Stream via GET - keep window open to receive events)
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=order-100&clientId=client-1"
 
-Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/release" -Method Post -ContentType "application/json" -Body '{"lockName":"order-100","tokenId":"PASTE_TOKEN_HERE"}'
+# 2.2 Acquire Lock (SSE Stream via POST)
+curl.exe -N -X POST "http://localhost:8080/api/v1/locks/acquire" `
+     -H "Content-Type: application/json" `
+     --data-raw '{\"lockName\": \"order-100\", \"clientId\": \"client-1\"}'
 
-Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/revoke" -Method Post -ContentType "application/json" -Body '{"lockName":"order-100","tokenId":"PASTE_TOKEN_HERE"}'
+# 2.3 Release Lock (PowerShell Invoke-RestMethod)
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/release" -Method Post -ContentType "application/json" -Body '{"lockName":"order-100","clientId":"client-1"}'
+
+# 2.4 Revoke Lock (PowerShell Invoke-RestMethod)
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/revoke" -Method Post -ContentType "application/json" -Body '{"lockName":"order-100","clientId":"client-1"}'
+
+
+# ==============================================================================
+# 3. END-TO-END TEST SCENARIOS
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# SCENARIO A: Fast Path Direct Acquire & Clean Release
+# ------------------------------------------------------------------------------
+# Terminal 1: Client-1 acquires Lock A (receives ACQUIRED and closes connection in 0ms)
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-A&clientId=client-1"
+
+# Terminal 1: Client-1 releases Lock A
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/release" -Method Post -ContentType "application/json" -Body '{"lockName":"resource-A","clientId":"client-1"}'
+
+
+# ------------------------------------------------------------------------------
+# SCENARIO B: FIFO Queue & Automatic SSE Handover
+# ------------------------------------------------------------------------------
+# Step 1 (Terminal 1): Client-1 acquires Lock A
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-A&clientId=client-1"
+
+# Step 2 (Terminal 2): Client-2 requests Lock A (receives QUEUED event, connection stays open)
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-A&clientId=client-2"
+
+# Step 3 (Terminal 3): Client-1 releases Lock A
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/release" -Method Post -ContentType "application/json" -Body '{"lockName":"resource-A","clientId":"client-1"}'
+# => Terminal 2 immediately receives ACQUIRED event and completes!
+
+
+# ------------------------------------------------------------------------------
+# SCENARIO C: Circular Deadlock Detection (A -> B -> A)
+# ------------------------------------------------------------------------------
+# Step 1: Client-1 acquires resource-A
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-A&clientId=client-1"
+
+# Step 2: Client-2 acquires resource-B
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-B&clientId=client-2"
+
+# Step 3 (Terminal 1): Client-1 requests resource-B (Resource-B is held by client-2 -> client-1 gets QUEUED)
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-B&clientId=client-1"
+
+# Step 4 (Terminal 2): Client-2 requests resource-A (Resource-A is held by client-1)
+# => DEADLOCK DETECTED! Client-2 receives DEADLOCK_DETECTED in 0ms and connection closes!
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-A&clientId=client-2"
+
+
+# ------------------------------------------------------------------------------
+# SCENARIO D: Queue Revocation (Cancel waiting without acquiring)
+# ------------------------------------------------------------------------------
+# Step 1: Client-1 holds lock
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-A&clientId=client-1"
+
+# Step 2: Client-2 is queued
+curl.exe -N "http://localhost:8080/api/v1/locks/acquire?lockName=resource-A&clientId=client-2"
+
+# Step 3: Client-2 decides to cancel/revoke while in queue
+Invoke-RestMethod -Uri "http://localhost:8080/api/v1/locks/revoke" -Method Post -ContentType "application/json" -Body '{"lockName":"resource-A","clientId":"client-2"}'
+# => Client-2's open SSE stream closes immediately with status REVOKED.

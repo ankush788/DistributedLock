@@ -1,1 +1,1 @@
-ConfigurationPropertiesScan -> in main file 
+sent event of revoke , abort , timeout before sse connection end -> for relvant situation

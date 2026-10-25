@@ -15,9 +15,13 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * Listens for Redis key expiration events (__keyevent@*__:expired).
- * When a lock key expires naturally (TTL timeout without explicit release),
- * this listener intercepts the expiration and triggers lockService.triggerQueueHandover(lockName)
- * to hand over the lock to the next waiting request in line.
+ *
+ * Intercepts two types of TTL expirations:
+ * 1. Lock Lease Expiry (lock:<lockName>):
+ *    Triggers lockService.triggerQueueHandover(lockName) to pass lock to next waiter.
+ * 2. Waiter Alarm Expiry (lock:waiter:<lockName>:<clientId>):
+ *    Triggers lockService.handleWaiterTimeout(lockName, clientId) to clean up graph,
+ *    queue, and notify the waiting SSE connection.
  */
 @Slf4j
 @Component
@@ -63,15 +67,27 @@ public class RedisKeyExpirationListener implements MessageListener {
 
         String expiredKey = new String(message.getBody(), StandardCharsets.UTF_8);
 
-        // Filter: We only react to actual lock keys (e.g. "lock:order-123"), NOT queue keys or notify channels
+        // Case 1: Active lock key expired naturally (TTL timeout)
         if (expiredKey.startsWith(RedisLockStore.LOCK_KEY_PREFIX)
-                && !expiredKey.startsWith(RedisLockStore.QUEUE_KEY_PREFIX)) {
+                && !expiredKey.startsWith(RedisLockStore.QUEUE_KEY_PREFIX)
+                && !expiredKey.startsWith(RedisLockStore.WAITER_KEY_PREFIX)) {
 
             String lockName = expiredKey.substring(RedisLockStore.LOCK_KEY_PREFIX.length());
             log.warn("Redis TTL EXPIRED: Lock key '{}' expired naturally. Triggering queue handover.", expiredKey);
-
-            // Hand over to the next request in line for this lock!
             lockService.triggerQueueHandover(lockName);
+        }
+        // Case 2: Individual waiter alarm key expired (60s queue wait timeout)
+        else if (expiredKey.startsWith(RedisLockStore.WAITER_KEY_PREFIX)) {
+            // Key format: "lock:waiter:<lockName>:<clientId>"
+            String remainder = expiredKey.substring(RedisLockStore.WAITER_KEY_PREFIX.length());
+            int separatorIndex = remainder.indexOf(':');
+            if (separatorIndex > 0) {
+                String lockName = remainder.substring(0, separatorIndex);
+                String clientId = remainder.substring(separatorIndex + 1);
+
+                log.warn("Redis WAITER ALARM EXPIRED: Client '{}' timed out waiting in queue for '{}'. Cleaning state.", clientId, lockName);
+                lockService.handleWaiterTimeout(lockName, clientId);
+            }
         }
     }
 }

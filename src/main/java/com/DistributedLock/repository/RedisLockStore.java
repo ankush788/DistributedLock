@@ -2,33 +2,32 @@ package com.DistributedLock.repository;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.RedisScript;
-import org.springframework.stereotype.Component;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.stereotype.Repository;
 
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.concurrent.TimeUnit;
 
 /**
- * Low-level Redis Store executing the 5 single-purpose Lua scripts.
+ * Low-level Redis data access layer executing single-purpose atomic Lua scripts.
  */
 @Slf4j
-@Component
+@Repository
 public class RedisLockStore {
 
     private final StringRedisTemplate redisTemplate;
-    private final RedisScript<Long> acquireLockScript;
-    private final RedisScript<Long> enqueueLockScript;
-    private final RedisScript<Long> releaseLockScript;
-    private final RedisScript<Long> revokeLockScript;
-    private final RedisScript<String> queueLockAcquireScript;
+    private final DefaultRedisScript<Long> acquireLockScript;
+    private final DefaultRedisScript<Long> enqueueLockScript;
+    private final DefaultRedisScript<Long> releaseLockScript;
+    private final DefaultRedisScript<Long> revokeLockScript;
+    private final DefaultRedisScript<String> queueLockAcquireScript;
 
     public RedisLockStore(StringRedisTemplate redisTemplate,
-                          RedisScript<Long> acquireLockScript,
-                          RedisScript<Long> enqueueLockScript,
-                          RedisScript<Long> releaseLockScript,
-                          RedisScript<Long> revokeLockScript,
-                          RedisScript<String> queueLockAcquireScript) {
+                          DefaultRedisScript<Long> acquireLockScript,
+                          DefaultRedisScript<Long> enqueueLockScript,
+                          DefaultRedisScript<Long> releaseLockScript,
+                          DefaultRedisScript<Long> revokeLockScript,
+                          DefaultRedisScript<String> queueLockAcquireScript) {
         this.redisTemplate = redisTemplate;
         this.acquireLockScript = acquireLockScript;
         this.enqueueLockScript = enqueueLockScript;
@@ -39,11 +38,12 @@ public class RedisLockStore {
 
     public static final String LOCK_KEY_PREFIX = "lock:";
     public static final String QUEUE_KEY_PREFIX = "lock:queue:";
+    public static final String WAITER_KEY_PREFIX = "lock:waiter:";
 
     /**
      * 1. Direct acquire only: Tries to acquire lock if free and queue is empty.
      */
-    public boolean acquireDirect(String lockName, String tokenId, long timeoutSeconds) {
+    public boolean acquireDirect(String lockName, String clientId, long timeoutSeconds) {
         String lockKey = formatLockKey(lockName);
         String queueKey = formatQueueKey(lockName);
 
@@ -51,7 +51,7 @@ public class RedisLockStore {
             Long result = redisTemplate.execute(
                     acquireLockScript,
                     Arrays.asList(lockKey, queueKey),
-                    tokenId,
+                    clientId,
                     String.valueOf(timeoutSeconds)
             );
             return result != null && result == 1L;
@@ -62,37 +62,39 @@ public class RedisLockStore {
     }
 
     /**
-     * 2. Enqueue only: Appends tokenId#timestamp to queue list.
+     * 2. Enqueue only: Appends clientId to queue and arms individual waiter alarm key.
+     * Returns: 1 = newly enqueued, 2 = already queued, 0 = failed/error.
      */
-    public boolean enqueue(String lockName, String tokenId, long currentTimeMillis, long queueSafetyTtlSeconds) {
+    public int enqueue(String lockName, String clientId, long queueTimeoutSeconds, long queueSafetyTtlSeconds) {
         String queueKey = formatQueueKey(lockName);
+        String waiterKey = formatWaiterKey(lockName, clientId);
 
         try {
             Long result = redisTemplate.execute(
                     enqueueLockScript,
-                    Collections.singletonList(queueKey),
-                    tokenId,
-                    String.valueOf(currentTimeMillis),
+                    Arrays.asList(queueKey, waiterKey),
+                    clientId,
+                    String.valueOf(queueTimeoutSeconds),
                     String.valueOf(queueSafetyTtlSeconds)
             );
-            return result != null && result == 1L;
+            return result != null ? result.intValue() : 0;
         } catch (Exception ex) {
             log.error("RedisLockStore: Error executing enqueueLockScript for '{}': {}", lockName, ex.getMessage(), ex);
-            return false;
+            return 0;
         }
     }
 
     /**
-     * 3. Release only: Deletes active lock key if token matches.
+     * 3. Release only: Deletes active lock key if clientId matches holder.
      */
-    public boolean release(String lockName, String tokenId) {
+    public boolean release(String lockName, String clientId) {
         String lockKey = formatLockKey(lockName);
 
         try {
             Long result = redisTemplate.execute(
                     releaseLockScript,
                     Collections.singletonList(lockKey),
-                    tokenId
+                    clientId
             );
             return result != null && result == 1L;
         } catch (Exception ex) {
@@ -102,17 +104,18 @@ public class RedisLockStore {
     }
 
     /**
-     * 4. Revoke only: Checks if holding lock (1), removes from queue (2), or not found (0).
+     * 4. Revoke only: Checks if holding lock (1), removes from queue and deletes alarm key (2), or not found (0).
      */
-    public int revoke(String lockName, String tokenId) {
+    public int revoke(String lockName, String clientId) {
         String lockKey = formatLockKey(lockName);
         String queueKey = formatQueueKey(lockName);
+        String waiterKey = formatWaiterKey(lockName, clientId);
 
         try {
             Long result = redisTemplate.execute(
                     revokeLockScript,
-                    Arrays.asList(lockKey, queueKey),
-                    tokenId
+                    Arrays.asList(lockKey, queueKey, waiterKey),
+                    clientId
             );
             return result != null ? result.intValue() : 0;
         } catch (Exception ex) {
@@ -122,25 +125,70 @@ public class RedisLockStore {
     }
 
     /**
-     * 5. Queue lock acquire: Hands over freed lock to first fresh waiter in queue.
-     * Returns winning tokenId, or empty string if none.
+     * 5. Queue lock acquire: Hands over freed lock to first waiter in queue (O(1)).
+     * Returns winning clientId, or empty string if none.
      */
-    public String queueLockAcquire(String lockName, long lockTimeoutSeconds, long queueTimeoutMillis, long currentTimeMillis) {
+    public String queueLockAcquire(String lockName, long lockTimeoutSeconds) {
         String lockKey = formatLockKey(lockName);
         String queueKey = formatQueueKey(lockName);
 
         try {
-            String winningToken = redisTemplate.execute(
+            String winningClientId = redisTemplate.execute(
                     queueLockAcquireScript,
                     Arrays.asList(lockKey, queueKey),
-                    String.valueOf(lockTimeoutSeconds),
-                    String.valueOf(queueTimeoutMillis),
-                    String.valueOf(currentTimeMillis)
+                    String.valueOf(lockTimeoutSeconds)
             );
-            return winningToken != null ? winningToken.trim() : "";
+            return winningClientId != null ? winningClientId.trim() : "";
         } catch (Exception ex) {
             log.error("RedisLockStore: Error executing queueLockAcquireScript for '{}': {}", lockName, ex.getMessage(), ex);
             return "";
+        }
+    }
+
+    /**
+     * Deletes the waiter alarm key (e.g. after lock grant or manual cleanup).
+     */
+    public void deleteWaiterKey(String lockName, String clientId) {
+        try {
+            redisTemplate.delete(formatWaiterKey(lockName, clientId));
+        } catch (Exception ex) {
+            log.warn("RedisLockStore: Could not delete waiter key for '{}:{}': {}", lockName, clientId, ex.getMessage());
+        }
+    }
+
+    /**
+     * Removes a client directly from the Redis queue list (used on waiter timeout).
+     */
+    public void removeFromQueue(String lockName, String clientId) {
+        try {
+            redisTemplate.opsForList().remove(formatQueueKey(lockName), 1, clientId);
+        } catch (Exception ex) {
+            log.warn("RedisLockStore: Could not remove client '{}' from queue for '{}': {}", clientId, lockName, ex.getMessage());
+        }
+    }
+
+    /**
+     * Retrieves the current holder clientId from Redis, or null if lock key does not exist.
+     */
+    public String getLockHolder(String lockName) {
+        try {
+            return redisTemplate.opsForValue().get(formatLockKey(lockName));
+        } catch (Exception ex) {
+            log.warn("RedisLockStore: Could not get lock holder for '{}': {}", lockName, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Checks if a client is currently present in the Redis FIFO queue.
+     */
+    public boolean isClientInQueue(String lockName, String clientId) {
+        try {
+            var queue = redisTemplate.opsForList().range(formatQueueKey(lockName), 0, -1);
+            return queue != null && queue.contains(clientId);
+        } catch (Exception ex) {
+            log.warn("RedisLockStore: Could not check queue for '{}:{}': {}", lockName, clientId, ex.getMessage());
+            return false;
         }
     }
 
@@ -152,12 +200,15 @@ public class RedisLockStore {
         return Boolean.TRUE.equals(exists);
     }
 
-
     public String formatLockKey(String lockName) {
         return LOCK_KEY_PREFIX + lockName;
     }
 
     public String formatQueueKey(String lockName) {
         return QUEUE_KEY_PREFIX + lockName;
+    }
+
+    public String formatWaiterKey(String lockName, String clientId) {
+        return WAITER_KEY_PREFIX + lockName + ":" + clientId;
     }
 }

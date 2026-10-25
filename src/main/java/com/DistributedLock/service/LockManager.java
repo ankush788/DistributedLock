@@ -3,13 +3,13 @@ package com.DistributedLock.service;
 import com.DistributedLock.repository.RedisLockStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 /**
- * LockManager coordinates the single-purpose Redis lock operations.
+ * Domain-level coordinator executing atomic operations against RedisLockStore.
  */
 @Slf4j
-@Component
+@Service
 public class LockManager {
 
     private final RedisLockStore redisLockStore;
@@ -30,43 +30,68 @@ public class LockManager {
     /**
      * 1. Attempts direct acquire. Returns true if acquired, false if occupied or queue has waiters.
      */
-    public boolean acquireDirect(String lockName, String tokenId) {
-        return redisLockStore.acquireDirect(lockName, tokenId, defaultLockTimeoutSeconds);
+    public boolean acquireDirect(String lockName, String clientId) {
+        return redisLockStore.acquireDirect(lockName, clientId, defaultLockTimeoutSeconds);
     }
 
     /**
-     * 2. Places request in FIFO queue.
+     * 2. Places request in FIFO queue and arms waiter alarm key.
+     * Returns: 1 = newly enqueued, 2 = already queued, 0 = failed.
      */
-    public boolean enqueue(String lockName, String tokenId) {
+    public int enqueue(String lockName, String clientId) {
+        long queueTimeoutSeconds = Math.max(1, queueTimeoutMillis / 1000);
         long queueSafetyTtlSeconds = Math.max(1, queueSafetyTtlMs / 1000);
-        return redisLockStore.enqueue(lockName, tokenId, System.currentTimeMillis(), queueSafetyTtlSeconds);
+        return redisLockStore.enqueue(lockName, clientId, queueTimeoutSeconds, queueSafetyTtlSeconds);
     }
 
     /**
-     * 3. Releases active lock verifying ownership token.
+     * 3. Releases active lock verifying clientId matches current holder.
      */
-    public boolean release(String lockName, String tokenId) {
-        return redisLockStore.release(lockName, tokenId);
+    public boolean release(String lockName, String clientId) {
+        return redisLockStore.release(lockName, clientId);
     }
 
     /**
      * 4. Revoke check: 1 = holds lock, 2 = removed from queue, 0 = not found.
      */
-    public int revoke(String lockName, String tokenId) {
-        return redisLockStore.revoke(lockName, tokenId);
+    public int revoke(String lockName, String clientId) {
+        return redisLockStore.revoke(lockName, clientId);
     }
 
     /**
-     * 5. Handover engine: Hands over freed lock to first valid waiter in queue.
-     * Returns winning tokenId, or empty string if none.
+     * 5. Handover engine: Hands over freed lock to first waiter in queue (O(1)).
+     * Returns winning clientId, or empty string if none.
      */
     public String queueLockAcquire(String lockName) {
-        return redisLockStore.queueLockAcquire(
-                lockName,
-                defaultLockTimeoutSeconds,
-                queueTimeoutMillis,
-                System.currentTimeMillis()
-        );
+        return redisLockStore.queueLockAcquire(lockName, defaultLockTimeoutSeconds);
+    }
+
+    /**
+     * Cancels / deletes the waiter alarm key.
+     */
+    public void deleteWaiterKey(String lockName, String clientId) {
+        redisLockStore.deleteWaiterKey(lockName, clientId);
+    }
+
+    /**
+     * Removes client directly from the queue list.
+     */
+    public void removeFromQueue(String lockName, String clientId) {
+        redisLockStore.removeFromQueue(lockName, clientId);
+    }
+
+    /**
+     * Gets the current lock holder directly from Redis.
+     */
+    public String getLockHolder(String lockName) {
+        return redisLockStore.getLockHolder(lockName);
+    }
+
+    /**
+     * Checks if a client is currently present in the Redis FIFO queue.
+     */
+    public boolean isClientInQueue(String lockName, String clientId) {
+        return redisLockStore.isClientInQueue(lockName, clientId);
     }
 
     /**

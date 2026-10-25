@@ -2,35 +2,35 @@ DISTRIBUTED LOCKING SERVICE - STEP-BY-STEP IMPLEMENTATION ROADMAP
 
 Core Architecture: Spring Boot MVC REST + SSE Architecture.
 Client interacts with standard REST endpoints:
-- GET /api/v1/locks/acquire?lockName=... (or POST /api/v1/locks/acquire) -> Server-Sent Events (SSE).
+- GET /api/v1/locks/acquire?lockName=...&clientId=... (or POST /api/v1/locks/acquire {"lockName": "...", "clientId": "..."}) -> Server-Sent Events (SSE).
   - Fast Path: If free, sends ACQUIRED event and CLOSES connection immediately.
   - Queued Path: If occupied, enqueues in Redis FIFO list, sends QUEUED event, and KEEPS connection open.
   - Handover: When lock is released or expires, handover engine grants the lock, sends ACQUIRED event, and CLOSES connection.
-  - Safety on Disconnect/Timeout: onTimeout/onError triggers internal revokeLock(lockName, tokenId) to clean up.
-- POST /api/v1/locks/release {"lockName": "...", "tokenId": "..."} -> Releases token atomically, triggers handover engine to grant lock to next waiter.
-- POST /api/v1/locks/revoke {"lockName": "...", "tokenId": "..."} -> If held, delegates to releaseLock internally; if queued, removes from queue.
+  - Safety on Disconnect/Timeout: onTimeout/onError triggers internal revokeLock(lockName, clientId) to clean up.
+- POST /api/v1/locks/release {"lockName": "...", "clientId": "..."} -> Releases lock verifying client ownership, triggers handover engine to grant lock to next waiter.
+- POST /api/v1/locks/revoke {"lockName": "...", "clientId": "..."} -> If held, delegates to releaseLock internally; if queued, removes client from queue.
 - Key Expiry: Redis Key Expiration Listener (__keyevent@*__:expired) intercepts TTL expiration and automatically triggers queue handover.
 
 ================================================================================
 END-TO-END WORKFLOW (SSE STREAMING ARCHITECTURE):
 ================================================================================
-1. Client connects to: GET /api/v1/locks/acquire?lockName=order-123
+1. Client connects to: GET /api/v1/locks/acquire?lockName=order-123&clientId=client-1
 2. Server checks lock availability via acquire_lock.lua:
-   - FAST PATH: If free, server sends event "ACQUIRED" with tokenId, and immediately closes connection.
-   - QUEUED PATH: If occupied, server enqueues "tokenId#timestamp" into lock:queue:order-123 via enqueue_lock.lua,
+   - FAST PATH: If free, server sends event "ACQUIRED" with clientId, and immediately closes connection.
+   - QUEUED PATH: If occupied, server enqueues "clientId#timestamp" into lock:queue:order-123 via enqueue_lock.lua,
      sends event "QUEUED", and keeps connection open at 0% CPU.
-3. When lock holder calls: POST /api/v1/locks/release {"lockName": "order-123", "tokenId": "..."}:
-   - release_lock.lua verifies ownership token and deletes key.
+3. When lock holder calls: POST /api/v1/locks/release {"lockName": "order-123", "clientId": "client-1"}:
+   - release_lock.lua verifies client ownership and deletes key.
    - Server triggers queueLockAcquire (queue_lock_acquire.lua):
      - Cleans expired entries at queue head.
-     - Atomically assigns lock to first valid waiter with pure tokenId.
-     - Returns winning tokenId to server.
+     - Atomically assigns lock to first valid waiter with clientId.
+     - Returns winning clientId to server.
    - Server locates winner's open SseEmitter, sends event "ACQUIRED", and closes the connection!
 4. TTL EXPIRATION SAFETY:
    - If current holder crashes or forgets to release, Redis TTL deletes the lock key.
    - RedisKeyExpirationListener intercepts __keyevent@*__:expired and triggers triggerQueueHandover(lockName).
 5. CLIENT DISCONNECT / TIMEOUT SAFETY:
-   - If client disconnects or wait timeout triggers, emitter onTimeout / onError calls revokeLock(lockName, tokenId) internally.
+   - If client disconnects or wait timeout triggers, emitter onTimeout / onError calls revokeLock(lockName, clientId) internally.
    - revoke_lock.lua removes the entry from the queue (or if lock was held, calls releaseLock internally).
 
 ================================================================================
@@ -44,27 +44,27 @@ IMPLEMENTATION CHUNKS & MILESTONES:
 
 [x] CHUNK 2: Single-Purpose Atomic Lua Scripts
     - acquire_lock.lua: Fast-path direct acquire only.
-    - enqueue_lock.lua: FIFO queue insertion only with 24h sliding safety TTL.
-    - release_lock.lua: Atomic owner-verified release only.
-    - revoke_lock.lua: Single cancel/revoke logic (delegates holder to release, removes waiter from queue).
-    - queue_lock_acquire.lua: Handover engine with automatic queue timeout purging and atomic lock grant.
+    - enqueue_lock.lua: FIFO queue insertion with deduplication and arms individual waiter alarm key (lock:waiter:lockName:clientId).
+    - release_lock.lua: Atomic client-verified release only.
+    - revoke_lock.lua: Single cancel/revoke logic (cancels waiter alarm key, delegates holder to release, removes waiter from queue).
+    - queue_lock_acquire.lua: Pure O(1) handover engine popping next waiter and atomically granting lock.
 
 [x] CHUNK 3: Fair FIFO Queue Engine & SSE Handover
-    - Redis list FIFO queue (tokenId#timestamp) with sliding window expiry.
+    - Redis list FIFO queue (clientId) with individual keyspace waiter alarm keys (lock:waiter:lockName:clientId).
     - SseEmitter per queued client stored in ConcurrentHashMap.
-    - Automatic Redis Key Expiration Listener (__keyevent@*__:expired) for seamless TTL handover.
+    - Dual Redis Key Expiration Listener (__keyevent@*__:expired) for lock lease handover and waiter timeout cleanup.
     - Disconnect & timeout auto-revocation safety handlers.
 
 [x] CHUNK 4: Spring MVC REST Controller & Service Architecture
     - LockController: SSE endpoints for GET /api/v1/locks/acquire, POST /release, POST /revoke.
     - LockService: Coordinates atomic operations, SSE lifecycle, internal delegations, and handovers.
-    - Clean Record DTOs (LockRequestDto, LockReleaseDto, LockRevokeDto, LockResponseDto).
+    - Clean Record DTOs (LockRequestDto, LockReleaseDto, LockRevokeDto, LockResponseDto) using clientId.
     - Swagger UI / OpenAPI documentation at /swagger-ui.html.
 
-[ ] CHUNK 5: Graph-Based Deadlock Detection Engine
-    - LockDependencyGraph: Tracks active dependencies (Caller -> Waiting on Lock -> Held by Caller).
-    - DeadlockDetector: Depth-First Search (DFS) cycle detection.
-    - Cycle resolution: Abort conflicting request with DEADLOCK_ABORTED to break cycle safely.
+[x] CHUNK 5: Graph-Based Deadlock Detection Engine
+    - LockDependencyGraph: Tracks active dependencies and lock holders (lockName -> holder, waiter -> holder).
+    - DeadlockDetector: Instant BFS reachability cycle detection preventing circular deadlocks before queueing.
+    - Cycle resolution: Aborts conflicting request with DEADLOCK_DETECTED in 0ms to protect system throughput.
 
 [ ] CHUNK 6: Monitoring, Metrics & PostgreSQL Audit Store
     - LockAuditLog, MetricsSnapshot JPA entities and repositories in PostgreSQL.

@@ -35,11 +35,11 @@ public class LockException extends RuntimeException {
     }
 
     /**
-     * Thrown when an unauthorized caller attempts to release a lock with an invalid or mismatched tokenId.
+     * Thrown when an unauthorized caller attempts to release a lock with an invalid or mismatched clientId.
      */
     public static class UnauthorizedRelease extends LockException {
-        public UnauthorizedRelease(String lockName, String invalidTokenId) {
-            super(String.format("Unauthorized release attempt for lock '%s'. Provided tokenId does not match owner.", lockName), lockName);
+        public UnauthorizedRelease(String lockName, String invalidClientId) {
+            super(String.format("Unauthorized release attempt for lock '%s'. Provided clientId '%s' does not match owner.", lockName, invalidClientId), lockName);
         }
     }
 

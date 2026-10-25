@@ -7,11 +7,11 @@
 --
 -- KEYS[1]: lock key (e.g. "lock:order-123")
 -- KEYS[2]: queue key (e.g. "lock:queue:order-123")
--- ARGV[1]: tokenId (pure unique ownership token)
+-- ARGV[1]: clientId (unique client identifier)
 -- ARGV[2]: lockTimeoutSeconds (TTL for the lock key)
 --
 -- RETURNS:
---   1 -> ACQUIRED (Lock was free and queue was empty; acquired with pure tokenId)
+--   1 -> ACQUIRED (Lock was free and queue was empty; acquired with clientId)
 --   0 -> NOT_ACQUIRED (Lock is occupied or queue has waiters ahead)
 -- ============================================================================
 
