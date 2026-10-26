@@ -5,21 +5,18 @@ import com.DistributedLock.deadlock.LockDependencyGraph;
 import com.DistributedLock.dto.LockResponseDto;
 import com.DistributedLock.dto.LockResponseDto.LockStatus;
 import com.DistributedLock.exception.LockException;
+import com.DistributedLock.utils.LockUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Core Distributed Lock Service coordinating:
  * 1. Redis atomic Lua scripts (via LockManager).
  * 2. Real-time Server-Sent Events (SSE) streaming lifecycle.
  * 3. In-memory Directed Wait-For Graph and cycle detection (DeadlockDetector).
- * 4. Fair FIFO queue handover with Redis Keyspace Alarm timeouts.
+ * 4. Fair FIFO queue handover with Redis Keyspace Alarm timeouts (via LockUtils).
  * 5. Layer 2 Post-Enqueue Ground Truth verification to prevent race conditions.
  */
 @Slf4j
@@ -29,19 +26,19 @@ public class LockService {
     private final LockManager lockManager;
     private final LockDependencyGraph dependencyGraph;
     private final DeadlockDetector deadlockDetector;
+    private final LockUtils lockUtils;
 
     @Value("${distributed-lock.queue-timeout-ms:60000}")
     private long sseTimeoutMillis;
 
-    // Registry of open SSE streaming connections for queued clients, keyed by clientId
-    private final Map<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
-
     public LockService(LockManager lockManager,
                        LockDependencyGraph dependencyGraph,
-                       DeadlockDetector deadlockDetector) {
+                       DeadlockDetector deadlockDetector,
+                       LockUtils lockUtils) {
         this.lockManager = lockManager;
         this.dependencyGraph = dependencyGraph;
         this.deadlockDetector = deadlockDetector;
+        this.lockUtils = lockUtils;
     }
 
     // =========================================================================
@@ -62,7 +59,7 @@ public class LockService {
      * - Step 5: Safe to wait -> records wait edge in graph, stores emitter, sends QUEUED, and keeps connection open.
      */
     public SseEmitter acquireLock(String lockName, String clientId) {
-        validateInputs(lockName, clientId);
+        lockUtils.validateInputs(lockName, clientId);
 
         SseEmitter emitter = new SseEmitter(sseTimeoutMillis);
         log.info("LockService: Acquire requested for '{}' [client={}]", lockName, clientId);
@@ -72,7 +69,7 @@ public class LockService {
         if (acquired) {
             log.info("LockService: Direct acquire succeeded for '{}' [client={}]", lockName, clientId);
             dependencyGraph.recordAcquired(lockName, clientId);
-            completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
+            lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
             return emitter;
         }
 
@@ -80,7 +77,7 @@ public class LockService {
         int enqueueResult = lockManager.enqueue(lockName, clientId);
         if (enqueueResult <= 0) {
             log.error("LockService: Failed to enqueue client '{}' for lock '{}' in Redis", clientId, lockName);
-            completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Failed to enqueue lock request in Redis"));
+            lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Failed to enqueue lock request in Redis"));
             return emitter;
         }
 
@@ -93,7 +90,7 @@ public class LockService {
                 dependencyGraph.removeClient(clientId);
                 dependencyGraph.recordAcquired(lockName, clientId);
                 lockManager.deleteWaiterKey(lockName, clientId);
-                completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
+                lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
                 return emitter;
             }
         }
@@ -109,7 +106,7 @@ public class LockService {
             realHolder = lockManager.getLockHolder(lockName);
             if (clientId.equals(realHolder)) {
                 log.info("LockService: Immediate handover granted lock '{}' to client '{}'!", lockName, clientId);
-                completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
+                lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
                 return emitter;
             }
         }
@@ -117,16 +114,16 @@ public class LockService {
         // Case 4B: Duplicate request caught - client already holds this lock
         if (clientId.equals(realHolder)) {
             log.warn("LockService: Client '{}' already holds lock '{}' in Redis", clientId, lockName);
-            cleanPendingQueueEntry(lockName, clientId);
-            completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Client '" + clientId + "' already holds this lock"));
+            lockUtils.cleanPendingQueueEntry(lockName, clientId);
+            lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Client '" + clientId + "' already holds this lock"));
             return emitter;
         }
 
         // Case 4C: Proactive Deadlock Check against the verified Redis holder
         if (realHolder != null && deadlockDetector.willCauseDeadlock(clientId, realHolder)) {
             log.warn("LockService: DEADLOCK DETECTED! Aborting for '{}' [waiting={}, holder={}]", lockName, clientId, realHolder);
-            cleanPendingQueueEntry(lockName, clientId);
-            completeWithEvent(emitter, new LockResponseDto(
+            lockUtils.cleanPendingQueueEntry(lockName, clientId);
+            lockUtils.completeWithEvent(emitter, new LockResponseDto(
                     lockName,
                     clientId,
                     LockStatus.DEADLOCK_DETECTED,
@@ -142,7 +139,7 @@ public class LockService {
         }
 
         log.info("LockService: Lock '{}' occupied. Request waiting in FIFO queue [client={}]", lockName, clientId);
-        registerWaitingEmitter(lockName, clientId, emitter, enqueueResult);
+        lockUtils.registerWaitingEmitter(lockName, clientId, emitter, enqueueResult);
 
         // Immediate check in case lock was freed in this exact millisecond
         triggerQueueHandover(lockName);
@@ -159,7 +156,7 @@ public class LockService {
      * and triggers handover to the next queued client.
      */
     public LockResponseDto releaseLock(String lockName, String clientId) {
-        validateInputs(lockName, clientId);
+        lockUtils.validateInputs(lockName, clientId);
         log.info("LockService: Release requested for '{}' [client={}]", lockName, clientId);
 
         boolean released = lockManager.release(lockName, clientId);
@@ -195,7 +192,7 @@ public class LockService {
      * - If client is waiting in queue -> removes from queue, deletes alarm key, and closes SSE stream.
      */
     public LockResponseDto revokeLock(String lockName, String clientId) {
-        validateInputs(lockName, clientId);
+        lockUtils.validateInputs(lockName, clientId);
         log.info("LockService: Revoke requested for '{}' [client={}]", lockName, clientId);
 
         int outcome = lockManager.revoke(lockName, clientId);
@@ -209,7 +206,7 @@ public class LockService {
             dependencyGraph.removeClient(clientId);
 
             // Close active waiting SSE connection
-            SseEmitter emitter = activeEmitters.remove(clientId);
+            SseEmitter emitter = lockUtils.removeEmitter(clientId);
             if (emitter != null) {
                 try {
                     emitter.complete();
@@ -224,141 +221,15 @@ public class LockService {
     }
 
     // =========================================================================
-    // 4. QUEUE HANDOVER ENGINE
+    // 4. DELEGATE METHODS TO LOCKUTILS
     // =========================================================================
 
-    /**
-     * Executes queueLockAcquire. If a valid waiter won the lock:
-     * - Cancels its waiter alarm key.
-     * - Updates graph ownership.
-     * - Sends ACQUIRED event to its open SSE stream and closes connection.
-     */
     public void triggerQueueHandover(String lockName) {
-        String winningClientId = lockManager.queueLockAcquire(lockName);
-
-        if (winningClientId != null && !winningClientId.isBlank()) {
-            log.info("LockService: Queue handover granted lock '{}' to client '{}'", lockName, winningClientId);
-
-            // Cancel alarm key so it won't fire timeout later
-            lockManager.deleteWaiterKey(lockName, winningClientId);
-
-            // Clean wait dependencies for winning client since it's no longer waiting
-            dependencyGraph.removeClient(winningClientId);
-
-            // Update dependency graph with new owner
-            dependencyGraph.recordAcquired(lockName, winningClientId);
-
-            SseEmitter waitingEmitter = activeEmitters.remove(winningClientId);
-            if (waitingEmitter != null) {
-                completeWithEvent(waitingEmitter, new LockResponseDto(
-                        lockName,
-                        winningClientId,
-                        LockStatus.ACQUIRED,
-                        null,
-                        "Lock acquired from queue successfully"
-                ));
-            } else {
-                // If client had already disconnected, pass lock to the next waiter
-                log.warn("LockService: Granted client '{}' already disconnected. Releasing to next.", winningClientId);
-                releaseLock(lockName, winningClientId);
-            }
-        }
+        lockUtils.triggerQueueHandover(lockName);
     }
 
-    // =========================================================================
-    // 5. WAITER TIMEOUT HANDLER (REDIS KEYSPACE ALARM)
-    // =========================================================================
-
-    /**
-     * Intercepts Redis keyspace alarm expiration for lock:waiter:<lockName>:<clientId>.
-     * Cleans graph, notifies SSE connection with TIMEOUT, and purges Redis queue list.
-     */
     public void handleWaiterTimeout(String lockName, String clientId) {
-        log.warn("LockService: Waiter timeout triggered by Redis alarm for '{}' [client={}]", lockName, clientId);
-
-        // 1. Remove from in-memory wait graph
-        dependencyGraph.removeClient(clientId);
-
-        // 2. Remove and notify waiting SSE stream
-        SseEmitter emitter = activeEmitters.remove(clientId);
-        if (emitter != null) {
-            completeWithEvent(emitter, new LockResponseDto(
-                    lockName,
-                    clientId,
-                    LockStatus.TIMEOUT,
-                    null,
-                    "Queue wait timeout exceeded (60s)"
-            ));
-        }
-
-        // 3. Purge from Redis queue list
-        lockManager.removeFromQueue(lockName, clientId);
-    }
-
-    // =========================================================================
-    // HELPER METHODS (MODULARITY & READABILITY)
-    // =========================================================================
-
-    private void registerWaitingEmitter(String lockName, String clientId, SseEmitter emitter, int enqueueResult) {
-        activeEmitters.put(clientId, emitter);
-
-        // Send initial QUEUED event
-        sendSseEvent(emitter, new LockResponseDto(
-                lockName,
-                clientId,
-                LockStatus.QUEUED,
-                null,
-                enqueueResult == 2
-                        ? "Request is already in FIFO queue"
-                        : "Lock is occupied; request placed in FIFO queue"
-        ));
-
-        // Safety on timeout: revokes internally
-        emitter.onTimeout(() -> {
-            log.warn("LockService: SSE timeout for '{}' [client={}]. Revoking internally.", lockName, clientId);
-            activeEmitters.remove(clientId);
-            revokeLock(lockName, clientId);
-        });
-
-        // Safety on disconnect/error: revokes internally
-        emitter.onError((ex) -> {
-            log.warn("LockService: SSE disconnect/error for '{}' [client={}]. Revoking internally.", lockName, clientId);
-            activeEmitters.remove(clientId);
-            revokeLock(lockName, clientId);
-        });
-
-        emitter.onCompletion(() -> activeEmitters.remove(clientId));
-    }
-
-    private void cleanPendingQueueEntry(String lockName, String clientId) {
-        lockManager.removeFromQueue(lockName, clientId);
-        lockManager.deleteWaiterKey(lockName, clientId);
-    }
-
-    private void completeWithEvent(SseEmitter emitter, LockResponseDto response) {
-        sendSseEvent(emitter, response);
-        try {
-            emitter.complete();
-        } catch (Exception ignored) {}
-    }
-
-    private void sendSseEvent(SseEmitter emitter, LockResponseDto response) {
-        try {
-            emitter.send(SseEmitter.event()
-                    .name("lock-event")
-                    .data(response, MediaType.APPLICATION_JSON));
-        } catch (Exception e) {
-            log.warn("LockService: Failed to send SSE event for client '{}': {}", response.clientId(), e.getMessage());
-        }
-    }
-
-    private void validateInputs(String lockName, String clientId) {
-        if (lockName == null || lockName.isBlank()) {
-            throw new IllegalArgumentException("Lock name must not be blank");
-        }
-        if (clientId == null || clientId.isBlank()) {
-            throw new IllegalArgumentException("Client ID must not be blank");
-        }
+        lockUtils.handleWaiterTimeout(lockName, clientId);
     }
 
     public LockManager getLockManager() {
@@ -371,5 +242,9 @@ public class LockService {
 
     public DeadlockDetector getDeadlockDetector() {
         return deadlockDetector;
+    }
+
+    public LockUtils getLockUtils() {
+        return lockUtils;
     }
 }
