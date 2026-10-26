@@ -73,7 +73,16 @@ public class RedisKeyExpirationListener implements MessageListener {
                 && !expiredKey.startsWith(RedisLockStore.WAITER_KEY_PREFIX)) {
 
             String lockName = expiredKey.substring(RedisLockStore.LOCK_KEY_PREFIX.length());
-            log.warn("Redis TTL EXPIRED: Lock key '{}' expired naturally. Triggering queue handover.", expiredKey);
+            log.warn("Redis TTL EXPIRED: Lock key '{}' expired naturally. Cleaning deadlock graph and triggering handover.", expiredKey);
+
+            // Clean deadlock detector resources: release old holder from dependency graph
+            String oldHolder = lockService.getDependencyGraph().getLockHolder(lockName);
+            if (oldHolder != null) {
+                log.info("Deadlock Graph Cleanup: Releasing expired lock holder '{}' for '{}'", oldHolder, lockName);
+                lockService.getDependencyGraph().recordReleased(lockName, oldHolder);
+            }
+
+            // Hand over freed lock to the next waiting client in FIFO line
             lockService.triggerQueueHandover(lockName);
         }
         // Case 2: Individual waiter alarm key expired (60s queue wait timeout)
@@ -85,7 +94,12 @@ public class RedisKeyExpirationListener implements MessageListener {
                 String lockName = remainder.substring(0, separatorIndex);
                 String clientId = remainder.substring(separatorIndex + 1);
 
-                log.warn("Redis WAITER ALARM EXPIRED: Client '{}' timed out waiting in queue for '{}'. Cleaning state.", clientId, lockName);
+                log.warn("Redis WAITER ALARM EXPIRED: Client '{}' timed out waiting in queue for '{}'. Cleaning deadlock graph and state.", clientId, lockName);
+
+                // Clean deadlock detector resources: remove waiting edges for this client
+                lockService.getDependencyGraph().removeClient(clientId);
+
+                // Notify SSE stream with TIMEOUT and purge from Redis queue list
                 lockService.handleWaiterTimeout(lockName, clientId);
             }
         }
