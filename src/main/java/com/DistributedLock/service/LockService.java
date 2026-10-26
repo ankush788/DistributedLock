@@ -101,7 +101,7 @@ public class LockService {
         // Case 4A: Lock became free during enqueue (old holder released)
         if (realHolder == null) {
             log.info("LockService: Lock '{}' became free in Redis during enqueue. Triggering immediate handover.", lockName);
-            triggerQueueHandover(lockName);
+            lockUtils.triggerQueueHandover(lockName);
 
             realHolder = lockManager.getLockHolder(lockName);
             if (clientId.equals(realHolder)) {
@@ -142,7 +142,7 @@ public class LockService {
         lockUtils.registerWaitingEmitter(lockName, clientId, emitter, enqueueResult);
 
         // Immediate check in case lock was freed in this exact millisecond
-        triggerQueueHandover(lockName);
+        lockUtils.triggerQueueHandover(lockName);
 
         return emitter;
     }
@@ -177,7 +177,7 @@ public class LockService {
         dependencyGraph.recordReleased(lockName, clientId);
 
         // Hand over lock to the next waiting client in FIFO line
-        triggerQueueHandover(lockName);
+        lockUtils.triggerQueueHandover(lockName);
 
         return new LockResponseDto(lockName, clientId, LockStatus.RELEASED, null, "Lock released successfully");
     }
@@ -218,33 +218,5 @@ public class LockService {
             log.warn("LockService: Revoke failed. Client '{}' not found for lock '{}'", clientId, lockName);
             return new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Request not found: client neither holds lock nor waits in queue");
         }
-    }
-
-    // =========================================================================
-    // 4. DELEGATE METHODS TO LOCKUTILS
-    // =========================================================================
-
-    public void triggerQueueHandover(String lockName) {
-        lockUtils.triggerQueueHandover(lockName);
-    }
-
-    public void handleWaiterTimeout(String lockName, String clientId) {
-        lockUtils.handleWaiterTimeout(lockName, clientId);
-    }
-
-    public LockManager getLockManager() {
-        return lockManager;
-    }
-
-    public LockDependencyGraph getDependencyGraph() {
-        return dependencyGraph;
-    }
-
-    public DeadlockDetector getDeadlockDetector() {
-        return deadlockDetector;
-    }
-
-    public LockUtils getLockUtils() {
-        return lockUtils;
     }
 }

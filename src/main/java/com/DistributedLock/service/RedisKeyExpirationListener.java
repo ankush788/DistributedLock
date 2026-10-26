@@ -1,9 +1,10 @@
 package com.DistributedLock.service;
 
+import com.DistributedLock.deadlock.LockDependencyGraph;
 import com.DistributedLock.repository.RedisLockStore;
+import com.DistributedLock.utils.LockUtils;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -18,10 +19,9 @@ import java.nio.charset.StandardCharsets;
  *
  * Intercepts two types of TTL expirations:
  * 1. Lock Lease Expiry (lock:<lockName>):
- *    Triggers lockService.triggerQueueHandover(lockName) to pass lock to next waiter.
+ *    Cleans deadlock dependency graph and triggers lockUtils.triggerQueueHandover(lockName).
  * 2. Waiter Alarm Expiry (lock:waiter:<lockName>:<clientId>):
- *    Triggers lockService.handleWaiterTimeout(lockName, clientId) to clean up graph,
- *    queue, and notify the waiting SSE connection.
+ *    Cleans deadlock graph, notifies SSE connection with TIMEOUT, and purges Redis queue.
  */
 @Slf4j
 @Component
@@ -30,14 +30,17 @@ public class RedisKeyExpirationListener implements MessageListener {
     private static final String EXPIRED_EVENT_TOPIC = "__keyevent@*__:expired";
 
     private final RedisMessageListenerContainer redisMessageListenerContainer;
-    private final LockService lockService;
+    private final LockDependencyGraph dependencyGraph;
+    private final LockUtils lockUtils;
     private final StringRedisTemplate redisTemplate;
 
     public RedisKeyExpirationListener(RedisMessageListenerContainer redisMessageListenerContainer,
-                                      @Lazy LockService lockService,
+                                      LockDependencyGraph dependencyGraph,
+                                      LockUtils lockUtils,
                                       StringRedisTemplate redisTemplate) {
         this.redisMessageListenerContainer = redisMessageListenerContainer;
-        this.lockService = lockService;
+        this.dependencyGraph = dependencyGraph;
+        this.lockUtils = lockUtils;
         this.redisTemplate = redisTemplate;
     }
 
@@ -76,14 +79,14 @@ public class RedisKeyExpirationListener implements MessageListener {
             log.warn("Redis TTL EXPIRED: Lock key '{}' expired naturally. Cleaning deadlock graph and triggering handover.", expiredKey);
 
             // Clean deadlock detector resources: release old holder from dependency graph
-            String oldHolder = lockService.getDependencyGraph().getLockHolder(lockName);
+            String oldHolder = dependencyGraph.getLockHolder(lockName);
             if (oldHolder != null) {
                 log.info("Deadlock Graph Cleanup: Releasing expired lock holder '{}' for '{}'", oldHolder, lockName);
-                lockService.getDependencyGraph().recordReleased(lockName, oldHolder);
+                dependencyGraph.recordReleased(lockName, oldHolder);
             }
 
             // Hand over freed lock to the next waiting client in FIFO line
-            lockService.triggerQueueHandover(lockName);
+            lockUtils.triggerQueueHandover(lockName);
         }
         // Case 2: Individual waiter alarm key expired (60s queue wait timeout)
         else if (expiredKey.startsWith(RedisLockStore.WAITER_KEY_PREFIX)) {
@@ -97,10 +100,10 @@ public class RedisKeyExpirationListener implements MessageListener {
                 log.warn("Redis WAITER ALARM EXPIRED: Client '{}' timed out waiting in queue for '{}'. Cleaning deadlock graph and state.", clientId, lockName);
 
                 // Clean deadlock detector resources: remove waiting edges for this client
-                lockService.getDependencyGraph().removeClient(clientId);
+                dependencyGraph.removeClient(clientId);
 
                 // Notify SSE stream with TIMEOUT and purge from Redis queue list
-                lockService.handleWaiterTimeout(lockName, clientId);
+                lockUtils.handleWaiterTimeout(lockName, clientId);
             }
         }
     }
