@@ -90,6 +90,7 @@ public class LockService {
             String currentHolder = lockManager.getLockHolder(lockName);
             if (clientId.equals(currentHolder)) {
                 log.info("LockService: Client '{}' was popped from queue and granted lock '{}' via handover!", clientId, lockName);
+                dependencyGraph.removeClient(clientId);
                 dependencyGraph.recordAcquired(lockName, clientId);
                 lockManager.deleteWaiterKey(lockName, clientId);
                 completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
@@ -197,17 +198,17 @@ public class LockService {
         validateInputs(lockName, clientId);
         log.info("LockService: Revoke requested for '{}' [client={}]", lockName, clientId);
 
-        // Clean client from dependency graph
-        dependencyGraph.removeClient(clientId);
-
         int outcome = lockManager.revoke(lockName, clientId);
 
         if (outcome == 1) {
-            // Active lock owner: delegate to releaseLock service
+            // Active lock owner: delegate to releaseLock service internally
             log.info("LockService: Client '{}' holds the lock. Delegating to releaseLock() internally.", clientId);
             return releaseLock(lockName, clientId);
         } else if (outcome == 2) {
-            // Removed from queue: close active waiting SSE connection
+            // Confirmed removed from queue: clean wait dependencies from graph
+            dependencyGraph.removeClient(clientId);
+
+            // Close active waiting SSE connection
             SseEmitter emitter = activeEmitters.remove(clientId);
             if (emitter != null) {
                 try {
@@ -240,6 +241,9 @@ public class LockService {
 
             // Cancel alarm key so it won't fire timeout later
             lockManager.deleteWaiterKey(lockName, winningClientId);
+
+            // Clean wait dependencies for winning client since it's no longer waiting
+            dependencyGraph.removeClient(winningClientId);
 
             // Update dependency graph with new owner
             dependencyGraph.recordAcquired(lockName, winningClientId);
