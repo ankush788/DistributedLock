@@ -43,6 +43,20 @@ public class LockDependencyGraph {
     }
 
     /**
+     * Updates an existing waiting dependency by replacing oldHolder with newHolder.
+     */
+    public void updateWaiting(String waitingClientId, String oldHolder, String newHolder) {
+        Set<String> targets = waitGraph.get(waitingClientId);
+        if (targets != null && oldHolder != null) {
+            targets.remove(oldHolder);
+        }
+        if (newHolder != null) {
+            recordWaiting(waitingClientId, newHolder);
+        }
+        log.debug("Graph: Updated edge for [{}] from [{}] to [{}]", waitingClientId, oldHolder, newHolder);
+    }
+
+    /**
      * Removes all waiting edges and holdings for a client (called on cleanup/disconnect/timeout).
      */
     public void removeClient(String clientId) {

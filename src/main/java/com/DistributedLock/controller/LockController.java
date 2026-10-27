@@ -33,19 +33,6 @@ public class LockController {
     }
 
     /**
-     * Acquire endpoint using Server-Sent Events (SSE) via GET.
-     * Perfect for browser EventSource and curl -N.
-     */
-    @GetMapping(value = "/acquire", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @Operation(summary = "Acquire a distributed lock (SSE via GET)", description = "Streams lock state. Returns immediately if free, or streams until lock is acquired in fair FIFO order.")
-    public SseEmitter acquireLockGet(
-            @RequestParam("lockName") String lockName,
-            @RequestParam("clientId") String clientId) {
-        log.info("REST SSE (GET): Lock acquire request for resource '{}' [clientId={}]", lockName, clientId);
-        return lockService.acquireLock(lockName, clientId);
-    }
-
-    /**
      * Acquire endpoint using Server-Sent Events (SSE) via POST.
      * Compatible with REST clients passing JSON body.
      */

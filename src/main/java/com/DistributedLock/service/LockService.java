@@ -73,7 +73,28 @@ public class LockService {
             return emitter;
         }
 
-        // --- STEP 2: Enqueue in Redis & Arm Alarm Key ---
+        // --- STEP 2: Lock Occupied - Check if client already holds it ---
+        String currentHolder = lockManager.getLockHolder(lockName);
+        if (clientId.equals(currentHolder)) {
+            log.warn("LockService: Client '{}' already holds lock '{}'", clientId, lockName);
+            lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Client '" + clientId + "' already holds this lock"));
+            return emitter;
+        }
+
+        // --- STEP 3: Proactive Deadlock Check against current holder ---
+        if (currentHolder != null && deadlockDetector.willCauseDeadlock(clientId, currentHolder)) {
+            log.warn("LockService: DEADLOCK DETECTED! Aborting for '{}' [waiting={}, holder={}]", lockName, clientId, currentHolder);
+            lockUtils.completeWithEvent(emitter, new LockResponseDto(
+                    lockName,
+                    clientId,
+                    LockStatus.DEADLOCK_DETECTED,
+                    null,
+                    "Deadlock detected: circular wait cycle detected with client '" + currentHolder + "'"
+            ));
+            return emitter;
+        }
+
+        // --- STEP 4: Enqueue in Redis & Arm Alarm Key ---
         int enqueueResult = lockManager.enqueue(lockName, clientId);
         if (enqueueResult <= 0) {
             log.error("LockService: Failed to enqueue client '{}' for lock '{}' in Redis", clientId, lockName);
@@ -81,68 +102,52 @@ public class LockService {
             return emitter;
         }
 
-        // --- STEP 3: Layer 2 Check 1 - Did handover pop client from queue while enqueuing? ---
-        boolean inQueue = lockManager.isClientInQueue(lockName, clientId);
-        if (!inQueue) {
-            String currentHolder = lockManager.getLockHolder(lockName);
-            if (clientId.equals(currentHolder)) {
-                log.info("LockService: Client '{}' was popped from queue and granted lock '{}' via handover!", clientId, lockName);
-                dependencyGraph.removeClient(clientId);
+        // --- STEP 5: Register Waiting Emitter & Record Initial Dependency ---
+        lockUtils.registerWaitingEmitter(lockName, clientId, emitter, enqueueResult);
+        if (currentHolder != null) {
+            dependencyGraph.recordWaiting(clientId, currentHolder);
+        }
+
+        // --- STEP 6: Double-Check Verification against Fresh Holder ---
+        String freshHolder = lockManager.getLockHolder(lockName);
+
+        // Sub-case 6A: Lock became free in this exact millisecond
+        if (freshHolder == null) {
+            log.info("LockService: Lock '{}' became free during enqueue. Triggering handover.", lockName);
+            lockUtils.triggerQueueHandover(lockName);
+        }
+        // Sub-case 6B: This client already acquired the lock via handover
+        else if (clientId.equals(freshHolder)) {
+            log.info("LockService: Client '{}' already acquired lock '{}' via handover!", clientId, lockName);
+            SseEmitter waiting = lockUtils.removeEmitter(clientId);
+            if (waiting != null) {
                 dependencyGraph.recordAcquired(lockName, clientId);
                 lockManager.deleteWaiterKey(lockName, clientId);
-                lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
-                return emitter;
+                lockUtils.completeWithEvent(waiting, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
             }
         }
+        // Sub-case 6C: Lock holder changed to a new client
+        else if (!freshHolder.equals(currentHolder)) {
+            log.info("LockService: Lock '{}' holder changed from '{}' to '{}'. Updating graph.", lockName, currentHolder, freshHolder);
+            dependencyGraph.updateWaiting(clientId, currentHolder, freshHolder);
 
-        // --- STEP 4: Layer 2 Check 2 - Query Redis for the true, current lock holder ---
-        String realHolder = lockManager.getLockHolder(lockName);
-
-        // Case 4A: Lock became free during enqueue (old holder released)
-        if (realHolder == null) {
-            log.info("LockService: Lock '{}' became free in Redis during enqueue. Triggering immediate handover.", lockName);
-            lockUtils.triggerQueueHandover(lockName);
-
-            realHolder = lockManager.getLockHolder(lockName);
-            if (clientId.equals(realHolder)) {
-                log.info("LockService: Immediate handover granted lock '{}' to client '{}'!", lockName, clientId);
-                lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
-                return emitter;
+            // Verify deadlock against the new holder
+            if (deadlockDetector.willCauseDeadlock(clientId, freshHolder)) {
+                log.warn("LockService: DEADLOCK DETECTED with new holder '{}'! Aborting for client '{}'", freshHolder, clientId);
+                dependencyGraph.removeClient(clientId);
+                lockUtils.cleanPendingQueueEntry(lockName, clientId);
+                SseEmitter waiting = lockUtils.removeEmitter(clientId);
+                if (waiting != null) {
+                    lockUtils.completeWithEvent(waiting, new LockResponseDto(
+                            lockName,
+                            clientId,
+                            LockStatus.DEADLOCK_DETECTED,
+                            null,
+                            "Deadlock detected: circular wait cycle detected with client '" + freshHolder + "'"
+                    ));
+                }
             }
         }
-
-        // Case 4B: Duplicate request caught - client already holds this lock
-        if (clientId.equals(realHolder)) {
-            log.warn("LockService: Client '{}' already holds lock '{}' in Redis", clientId, lockName);
-            lockUtils.cleanPendingQueueEntry(lockName, clientId);
-            lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Client '" + clientId + "' already holds this lock"));
-            return emitter;
-        }
-
-        // Case 4C: Proactive Deadlock Check against the verified Redis holder
-        if (realHolder != null && deadlockDetector.willCauseDeadlock(clientId, realHolder)) {
-            log.warn("LockService: DEADLOCK DETECTED! Aborting for '{}' [waiting={}, holder={}]", lockName, clientId, realHolder);
-            lockUtils.cleanPendingQueueEntry(lockName, clientId);
-            lockUtils.completeWithEvent(emitter, new LockResponseDto(
-                    lockName,
-                    clientId,
-                    LockStatus.DEADLOCK_DETECTED,
-                    null,
-                    "Deadlock detected: circular wait cycle detected with client '" + realHolder + "'"
-            ));
-            return emitter;
-        }
-
-        // --- STEP 5: Safe to Wait ---
-        if (realHolder != null) {
-            dependencyGraph.recordWaiting(clientId, realHolder);
-        }
-
-        log.info("LockService: Lock '{}' occupied. Request waiting in FIFO queue [client={}]", lockName, clientId);
-        lockUtils.registerWaitingEmitter(lockName, clientId, emitter, enqueueResult);
-
-        // Immediate check in case lock was freed in this exact millisecond
-        lockUtils.triggerQueueHandover(lockName);
 
         return emitter;
     }
