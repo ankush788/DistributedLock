@@ -72,7 +72,7 @@ public class LockService {
             lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
             return emitter;
         }
-
+        
         // --- STEP 2: Lock Occupied - Check if client already holds it ---
         String currentHolder = lockManager.getLockHolder(lockName);
         if (clientId.equals(currentHolder)) {
@@ -94,40 +94,39 @@ public class LockService {
             return emitter;
         }
 
-        // --- STEP 4: Enqueue in Redis & Arm Alarm Key ---
+        // --- STEP 4: Register Waiting Emitter FIRST (Prevents Premature Disconnect Race) ---
+        lockUtils.registerWaitingEmitter(lockName, clientId, emitter, 1);
+        if (currentHolder != null) {
+            dependencyGraph.recordWaiting(clientId, currentHolder);
+        }
+
+        // --- STEP 5: Enqueue in Redis & Arm Alarm Key ---
         int enqueueResult = lockManager.enqueue(lockName, clientId);
         if (enqueueResult <= 0) {
             log.error("LockService: Failed to enqueue client '{}' for lock '{}' in Redis", clientId, lockName);
+            dependencyGraph.removeClient(clientId);
+            lockUtils.removeEmitter(clientId);
             lockUtils.completeWithEvent(emitter, new LockResponseDto(lockName, clientId, LockStatus.FAILED, null, "Failed to enqueue lock request in Redis"));
             return emitter;
-        }
-
-        // --- STEP 5: Register Waiting Emitter & Record Initial Dependency ---
-        lockUtils.registerWaitingEmitter(lockName, clientId, emitter, enqueueResult);
-        if (currentHolder != null) {
-            dependencyGraph.recordWaiting(clientId, currentHolder);
         }
 
         // --- STEP 6: Double-Check Verification against Fresh Holder ---
         String freshHolder = lockManager.getLockHolder(lockName);
 
-        // Sub-case 6A: Lock became free in this exact millisecond
-        if (freshHolder == null) {
-            log.info("LockService: Lock '{}' became free during enqueue. Triggering handover.", lockName);
-            lockUtils.triggerQueueHandover(lockName);
-        }
-        // Sub-case 6B: This client already acquired the lock via handover
-        else if (clientId.equals(freshHolder)) {
+        // Sub-case 6A: Handover already granted lock to THIS client
+        if (clientId.equals(freshHolder)) {
             log.info("LockService: Client '{}' already acquired lock '{}' via handover!", clientId, lockName);
+            dependencyGraph.recordAcquired(lockName, clientId);
+            lockManager.deleteWaiterKey(lockName, clientId);
             SseEmitter waiting = lockUtils.removeEmitter(clientId);
             if (waiting != null) {
-                dependencyGraph.recordAcquired(lockName, clientId);
-                lockManager.deleteWaiterKey(lockName, clientId);
                 lockUtils.completeWithEvent(waiting, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
             }
+            return emitter;
         }
-        // Sub-case 6C: Lock holder changed to a new client
-        else if (!freshHolder.equals(currentHolder)) {
+
+        // Sub-case 6B: Lock holder changed to a new client
+        if (freshHolder != null && !freshHolder.equals(currentHolder)) {
             log.info("LockService: Lock '{}' holder changed from '{}' to '{}'. Updating graph.", lockName, currentHolder, freshHolder);
             dependencyGraph.updateWaiting(clientId, currentHolder, freshHolder);
 
@@ -146,9 +145,12 @@ public class LockService {
                             "Deadlock detected: circular wait cycle detected with client '" + freshHolder + "'"
                     ));
                 }
+                return emitter;
             }
         }
 
+        // Sub-case 6C: Check if lock was freed in the meantime
+        lockUtils.triggerQueueHandover(lockName);
         return emitter;
     }
 
