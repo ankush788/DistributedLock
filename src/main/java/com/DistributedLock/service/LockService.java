@@ -116,12 +116,8 @@ public class LockService {
         // Sub-case 6A: Handover already granted lock to THIS client
         if (clientId.equals(freshHolder)) {
             log.info("LockService: Client '{}' already acquired lock '{}' via handover!", clientId, lockName);
-            dependencyGraph.recordAcquired(lockName, clientId);
             lockManager.deleteWaiterKey(lockName, clientId);
-            SseEmitter waiting = lockUtils.removeEmitter(clientId);
-            if (waiting != null) {
-                lockUtils.completeWithEvent(waiting, new LockResponseDto(lockName, clientId, LockStatus.ACQUIRED, null, "Lock acquired successfully"));
-            }
+            lockUtils.removeEmitter(clientId);
             return emitter;
         }
 
